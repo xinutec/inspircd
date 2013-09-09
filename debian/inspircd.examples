@@ -1,0 +1,4 @@
+docs/conf
+extras/m_sqloper.mysql.sql
+extras/m_sqloper.postgresql.sql  
+extras/m_sqloper.sqlite3.sql

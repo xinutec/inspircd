@@ -1,0 +1,3 @@
+version=3
+opts=dversionmangle=s/\+dfsg$// \
+https://github.com/inspircd/inspircd/downloads /downloads/inspircd/inspircd/InspIRCd-(.+)\.tar\.bz2

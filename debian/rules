@@ -1,0 +1,66 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+# hardening options at build time
+export DEB_BUILD_HARDENING=1
+
+# use DEB_BUILD_OPTIONS="parallel=n" to parallelize the build
+ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+	NUMJOBS = $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+	MAKEFLAGS += -j$(NUMJOBS)
+endif
+
+# modules selection
+LDAP_MODULES      = m_ldapauth.cpp,m_ldapoper.cpp
+DATABASES_MODULES = $(LDAP_MODULES),m_mysql.cpp,m_pgsql.cpp,m_sqlite3.cpp
+REGEX_MODULES     = m_regex_pcre.cpp,m_regex_posix.cpp,m_regex_tre.cpp
+OTHER_MODULES     = $(REGEX_MODULES),m_geoip.cpp
+SSL_MODULE        = m_ssl_gnutls.cpp
+INSPIRCD_MODULES  = $(SSL_MODULE),$(DATABASES_MODULES),$(OTHER_MODULES)
+
+override_dh_auto_configure:
+	# Enable extra modules
+	./configure --enable-extras=$(INSPIRCD_MODULES)
+
+	# Really launch configure
+	./configure --disable-interactive \
+		--enable-gnutls \
+		--system \
+		--uid=irc \
+		--prefix=/usr/lib/inspircd \
+		--data-dir=/var/run/inspircd \
+		--config-dir=/etc/inspircd \
+		--module-dir=/usr/lib/inspircd/modules \
+		--binary-dir=/usr/sbin
+
+# allow parallel build
+override_dh_auto_build:
+	dh_auto_build --parallel
+
+# install
+override_dh_auto_install:
+	dh_auto_install -- install DESTDIR=$(CURDIR)/debian/inspircd
+
+	# Delete example files (already in /usr/share/doc/inspircd/examples)
+	rm -f $(CURDIR)/debian/inspircd/etc/inspircd/*.example
+
+	# delete empty data and log dir
+	rmdir $(CURDIR)/debian/inspircd/usr/lib/inspircd/data \
+	$(CURDIR)/debian/inspircd/usr/lib/inspircd/logs
+
+# debugging symbols package
+override_dh_strip:
+	dh_strip --dbg-package=inspircd-dbg
+
+override_dh_auto_clean:
+	# call distclean instead of clean
+	dh_auto_clean -- distclean
+
+	# Delete symlinks to extra modules
+	find $(CURDIR)/src/modules/ -type l -exec rm '{}' \;
+
+	# Remove generated binary
+	rm -f $(CURDIR)/inspircd
+
+%:
+	dh $@

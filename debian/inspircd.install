@@ -1,0 +1,3 @@
+debian/inspircd.rules etc/inspircd/
+debian/inspircd.motd  etc/inspircd/
+debian/inspircd.conf  etc/inspircd/
