@@ -181,7 +181,11 @@ static bool WriteDatabase(Module* mod, bool save_listmodes)
 class PermChannel : public ModeHandler
 {
  public:
-	PermChannel(Module* Creator) : ModeHandler(Creator, "permanent", 'P', PARAM_NONE, MODETYPE_CHANNEL) { oper = true; }
+	PermChannel(Module* Creator) : ModeHandler(Creator, "permanent", 'P', PARAM_NONE, MODETYPE_CHANNEL)
+	{
+		/* Do clients need to be opers in order to set +P on this network? */
+		oper = ServerInstance->Config->ConfValue("permchannel_options")->getBool("need_oper", true);
+	}
 
 	ModeAction OnModeChange(User* source, User* dest, Channel* channel, std::string &parameter, bool adding)
 	{
