@@ -120,7 +120,8 @@ class ModuleSSLModes : public Module
 		{
 			UserCertificateRequest req(user, this);
 			req.Send();
-			if (req.cert && InspIRCd::Match(req.cert->GetFingerprint(), mask.substr(2)))
+			size_t comment = mask.find_first_of('#', 2);
+			if (req.cert && InspIRCd::Match(req.cert->GetFingerprint(), mask.substr(2,comment-2)))
 				return MOD_RES_DENY;
 		}
 		return MOD_RES_PASSTHRU;
