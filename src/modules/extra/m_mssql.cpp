@@ -24,22 +24,17 @@
 #include "inspircd.h"
 #include <tds.h>
 #include <tdsconvert.h>
-#include "users.h"
-#include "channels.h"
-#include "modules.h"
 
 #include "m_sqlv2.h"
 
-/* $ModDesc: MsSQL provider */
 /* $CompileFlags: exec("grep VERSION_NO /usr/include/tdsver.h 2>/dev/null | perl -e 'print "-D_TDSVER=".((<> =~ /freetds v(\d+\.\d+)/i) ? $1*100 : 0);'") */
 /* $LinkerFlags: -ltds */
-/* $ModDep: m_sqlv2.h */
 
 class SQLConn;
 class MsSQLResult;
 class ModuleMsSQL;
 
-typedef std::map<std::string, SQLConn*> ConnMap;
+typedef insp::flat_map<std::string, SQLConn*> ConnMap;
 typedef std::deque<MsSQLResult*> ResultQueue;
 
 unsigned long count(const char * const str, char a)
@@ -64,8 +59,8 @@ class QueryThread : public SocketThread
   public:
 	QueryThread(ModuleMsSQL* mod) : Parent(mod) { }
 	~QueryThread() { }
-	virtual void Run();
-	virtual void OnNotify();
+	void Run();
+	void OnNotify();
 };
 
 class MsSQLResult : public SQLresult
@@ -88,10 +83,6 @@ class MsSQLResult : public SQLresult
 	{
 	}
 
-	~MsSQLResult()
-	{
-	}
-
 	void AddRow(int colsnum, char **dat, char **colname)
 	{
 		colnames.clear();
@@ -111,17 +102,17 @@ class MsSQLResult : public SQLresult
 		rows++;
 	}
 
-	virtual int Rows()
+	int Rows()
 	{
 		return rows;
 	}
 
-	virtual int Cols()
+	int Cols()
 	{
 		return cols;
 	}
 
-	virtual std::string ColName(int column)
+	std::string ColName(int column)
 	{
 		if (column < (int)colnames.size())
 		{
@@ -134,7 +125,7 @@ class MsSQLResult : public SQLresult
 		return "";
 	}
 
-	virtual int ColNum(const std::string &column)
+	int ColNum(const std::string &column)
 	{
 		for (unsigned int i = 0; i < colnames.size(); i++)
 		{
@@ -145,7 +136,7 @@ class MsSQLResult : public SQLresult
 		return 0;
 	}
 
-	virtual SQLfield GetValue(int row, int column)
+	SQLfield GetValue(int row, int column)
 	{
 		if ((row >= 0) && (row < rows) && (column >= 0) && (column < Cols()))
 		{
@@ -158,7 +149,7 @@ class MsSQLResult : public SQLresult
 		return SQLfield("",true);
 	}
 
-	virtual SQLfieldList& GetRow()
+	SQLfieldList& GetRow()
 	{
 		if (currentrow < rows)
 			return fieldlists[currentrow];
@@ -166,7 +157,7 @@ class MsSQLResult : public SQLresult
 			return emptyfieldlist;
 	}
 
-	virtual SQLfieldMap& GetRowMap()
+	SQLfieldMap& GetRowMap()
 	{
 		/* In an effort to reduce overhead we don't actually allocate the map
 		 * until the first time it's needed...so...
@@ -192,7 +183,7 @@ class MsSQLResult : public SQLresult
 		return *fieldmap;
 	}
 
-	virtual SQLfieldList* GetRowPtr()
+	SQLfieldList* GetRowPtr()
 	{
 		fieldlist = new SQLfieldList();
 
@@ -207,7 +198,7 @@ class MsSQLResult : public SQLresult
 		return fieldlist;
 	}
 
-	virtual SQLfieldMap* GetRowMapPtr()
+	SQLfieldMap* GetRowMapPtr()
 	{
 		fieldmap = new SQLfieldMap();
 
@@ -223,12 +214,12 @@ class MsSQLResult : public SQLresult
 		return fieldmap;
 	}
 
-	virtual void Free(SQLfieldMap* fm)
+	void Free(SQLfieldMap* fm)
 	{
 		delete fm;
 	}
 
-	virtual void Free(SQLfieldList* fl)
+	void Free(SQLfieldList* fl)
 	{
 		delete fl;
 	}
@@ -258,7 +249,7 @@ class SQLConn : public classbase
 				if (tds_process_simple_query(sock) != TDS_SUCCEED)
 				{
 					LoggingMutex->Lock();
-					ServerInstance->Logs->Log("m_mssql",DEFAULT, "WARNING: Could not select database " + host.name + " for DB with id: " + host.id);
+					ServerInstance->Logs->Log(MODNAME, LOG_DEFAULT, "WARNING: Could not select database " + host.name + " for DB with id: " + host.id);
 					LoggingMutex->Unlock();
 					CloseDB();
 				}
@@ -266,7 +257,7 @@ class SQLConn : public classbase
 			else
 			{
 				LoggingMutex->Lock();
-				ServerInstance->Logs->Log("m_mssql",DEFAULT, "WARNING: Could not select database " + host.name + " for DB with id: " + host.id);
+				ServerInstance->Logs->Log(MODNAME, LOG_DEFAULT, "WARNING: Could not select database " + host.name + " for DB with id: " + host.id);
 				LoggingMutex->Unlock();
 				CloseDB();
 			}
@@ -274,7 +265,7 @@ class SQLConn : public classbase
 		else
 		{
 			LoggingMutex->Lock();
-			ServerInstance->Logs->Log("m_mssql",DEFAULT, "WARNING: Could not connect to DB with id: " + host.id);
+			ServerInstance->Logs->Log(MODNAME, LOG_DEFAULT, "WARNING: Could not connect to DB with id: " + host.id);
 			LoggingMutex->Unlock();
 			CloseDB();
 		}
@@ -433,7 +424,7 @@ class SQLConn : public classbase
 
 		char* msquery = strdup(req->query.q.data());
 		LoggingMutex->Lock();
-		ServerInstance->Logs->Log("m_mssql",DEBUG,"doing Query: %s",msquery);
+		ServerInstance->Logs->Log(MODNAME, LOG_DEBUG, "doing Query: %s",msquery);
 		LoggingMutex->Unlock();
 		if (tds_submit_query(sock, msquery) != TDS_SUCCEED)
 		{
@@ -449,8 +440,8 @@ class SQLConn : public classbase
 		int tds_res;
 		while (tds_process_tokens(sock, &tds_res, NULL, TDS_TOKEN_RESULTS) == TDS_SUCCEED)
 		{
-			//ServerInstance->Logs->Log("m_mssql",DEBUG,"<******> result type: %d", tds_res);
-			//ServerInstance->Logs->Log("m_mssql",DEBUG,"AFFECTED ROWS: %d", sock->rows_affected);
+			//ServerInstance->Logs->Log(MODNAME, LOG_DEBUG, "<******> result type: %d", tds_res);
+			//ServerInstance->Logs->Log(MODNAME, LOG_DEBUG, "AFFECTED ROWS: %d", sock->rows_affected);
 			switch (tds_res)
 			{
 				case TDS_ROWFMT_RESULT:
@@ -476,8 +467,8 @@ class SQLConn : public classbase
 						if (sock->res_info->row_count > 0)
 						{
 							int cols = sock->res_info->num_cols;
-							char** name = new char*[MAXBUF];
-							char** data = new char*[MAXBUF];
+							char** name = new char*[512];
+							char** data = new char*[512];
 							for (int j=0; j<cols; j++)
 							{
 								TDSCOLUMN* col = sock->current_results->columns[j];
@@ -516,7 +507,7 @@ class SQLConn : public classbase
 	{
 		SQLConn* sc = (SQLConn*)pContext->parent;
 		LoggingMutex->Lock();
-		ServerInstance->Logs->Log("m_mssql", DEBUG, "Message for DB with id: %s -> %s", sc->host.id.c_str(), pMessage->message);
+		ServerInstance->Logs->Log(MODNAME, LOG_DEBUG, "Message for DB with id: %s -> %s", sc->host.id.c_str(), pMessage->message);
 		LoggingMutex->Unlock();
 		return 0;
 	}
@@ -525,7 +516,7 @@ class SQLConn : public classbase
 	{
 		SQLConn* sc = (SQLConn*)pContext->parent;
 		LoggingMutex->Lock();
-		ServerInstance->Logs->Log("m_mssql", DEFAULT, "Error for DB with id: %s -> %s", sc->host.id.c_str(), pMessage->message);
+		ServerInstance->Logs->Log(MODNAME, LOG_DEFAULT, "Error for DB with id: %s -> %s", sc->host.id.c_str(), pMessage->message);
 		LoggingMutex->Unlock();
 		return 0;
 	}
@@ -657,18 +648,14 @@ class ModuleMsSQL : public Module
 		queryDispatcher = new QueryThread(this);
 	}
 
-	void init()
+	void init() CXX11_OVERRIDE
 	{
 		ReadConf();
 
-		ServerInstance->Threads->Start(queryDispatcher);
-
-		Implementation eventlist[] = { I_OnRehash };
-		ServerInstance->Modules->Attach(eventlist, this, sizeof(eventlist)/sizeof(Implementation));
-		ServerInstance->Modules->AddService(sqlserv);
+		ServerInstance->Threads.Start(queryDispatcher);
 	}
 
-	virtual ~ModuleMsSQL()
+	~ModuleMsSQL()
 	{
 		queryDispatcher->join();
 		delete queryDispatcher;
@@ -753,7 +740,7 @@ class ModuleMsSQL : public Module
 		if (HasHost(hi))
 		{
 			LoggingMutex->Lock();
-			ServerInstance->Logs->Log("m_mssql",DEFAULT, "WARNING: A MsSQL connection with id: %s already exists. Aborting database open attempt.", hi.id.c_str());
+			ServerInstance->Logs->Log(MODNAME, LOG_DEFAULT, "WARNING: A MsSQL connection with id: %s already exists. Aborting database open attempt.", hi.id.c_str());
 			LoggingMutex->Unlock();
 			return;
 		}
@@ -787,14 +774,14 @@ class ModuleMsSQL : public Module
 		connections.clear();
 	}
 
-	virtual void OnRehash(User* user)
+	void ReadConfig(ConfigStatus& status) CXX11_OVERRIDE
 	{
 		queryDispatcher->LockQueue();
 		ReadConf();
 		queryDispatcher->UnlockQueueWakeup();
 	}
 
-	void OnRequest(Request& request)
+	void OnRequest(Request& request) CXX11_OVERRIDE
 	{
 		if(strcmp(SQLREQID, request.id) == 0)
 		{
@@ -825,7 +812,7 @@ class ModuleMsSQL : public Module
 		return ++currid;
 	}
 
-	virtual Version GetVersion()
+	Version GetVersion() CXX11_OVERRIDE
 	{
 		return Version("MsSQL provider", VF_VENDOR);
 	}

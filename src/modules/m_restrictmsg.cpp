@@ -21,22 +21,10 @@
 
 #include "inspircd.h"
 
-/* $ModDesc: Forbids users from messaging each other. Users may still message opers and opers may message other opers. */
-
-
 class ModuleRestrictMsg : public Module
 {
-
  public:
-
-	void init()
-	{
-		Implementation eventlist[] = { I_OnUserPreMessage, I_OnUserPreNotice };
-		ServerInstance->Modules->Attach(eventlist, this, sizeof(eventlist)/sizeof(Implementation));
-	}
-
-
-	virtual ModResult OnUserPreMessage(User* user,void* dest,int target_type, std::string &text, char status, CUList &exempt_list)
+	ModResult OnUserPreMessage(User* user, void* dest, int target_type, std::string& text, char status, CUList& exempt_list, MessageType msgtype) CXX11_OVERRIDE
 	{
 		if ((target_type == TYPE_USER) && (IS_LOCAL(user)))
 		{
@@ -45,12 +33,13 @@ class ModuleRestrictMsg : public Module
 			// message allowed if:
 			// (1) the sender is opered
 			// (2) the recipient is opered
+			// (3) the recipient is on a ulined server
 			// anything else, blocked.
-			if (IS_OPER(u) || IS_OPER(user))
+			if (u->IsOper() || user->IsOper() || u->server->IsULine())
 			{
 				return MOD_RES_PASSTHRU;
 			}
-			user->WriteNumeric(ERR_CANTSENDTOUSER, "%s %s :You are not permitted to send private messages to this user",user->nick.c_str(),u->nick.c_str());
+			user->WriteNumeric(ERR_CANTSENDTOUSER, u->nick, "You are not permitted to send private messages to this user");
 			return MOD_RES_DENY;
 		}
 
@@ -58,16 +47,7 @@ class ModuleRestrictMsg : public Module
 		return MOD_RES_PASSTHRU;
 	}
 
-	virtual ModResult OnUserPreNotice(User* user,void* dest,int target_type, std::string &text, char status, CUList &exempt_list)
-	{
-		return this->OnUserPreMessage(user,dest,target_type,text,status,exempt_list);
-	}
-
-	virtual ~ModuleRestrictMsg()
-	{
-	}
-
-	virtual Version GetVersion()
+	Version GetVersion() CXX11_OVERRIDE
 	{
 		return Version("Forbids users from messaging each other. Users may still message opers and opers may message other opers.",VF_VENDOR);
 	}

@@ -22,8 +22,7 @@
  */
 
 
-#ifndef INSPIRCD_SOCKET_H
-#define INSPIRCD_SOCKET_H
+#pragma once
 
 #ifndef _WIN32
 
@@ -110,9 +109,6 @@ namespace irc
 		 */
 		CoreExport bool MatchCIDR(const std::string &address, const std::string &cidr_mask, bool match_with_username);
 
-		/** Return the size of the structure for syscall passing */
-		inline int sa_size(const irc::sockets::sockaddrs& sa) { return sa.sa_size(); }
-
 		/** Convert an address-port pair into a binary sockaddr
 		 * @param addr The IP address, IPv4 or IPv6
 		 * @param port The port, 0 for unspecified
@@ -128,16 +124,10 @@ namespace irc
 		 * @return true if the conversion was successful, false if unknown address family
 		 */
 		CoreExport bool satoap(const irc::sockets::sockaddrs& sa, std::string& addr, int &port);
-
-		/** Convert a binary sockaddr to a user-readable string.
-		 * This means IPv6 addresses are written as [::1]:6667, and *:6668 is used for 0.0.0.0:6668
-		 * @param sa The structure to convert
-		 * @return The string; "<unknown>" if not a valid address
-		 */
-		inline std::string satouser(const irc::sockets::sockaddrs& sa) { return sa.str(); }
 	}
 }
 
+#include "iohook.h"
 #include "socketengine.h"
 /** This class handles incoming connections on client ports.
  * It will create a new User for every valid connection
@@ -151,20 +141,26 @@ class CoreExport ListenSocket : public EventHandler
 	int bind_port;
 	/** Human-readable bind description */
 	std::string bind_desc;
+
+	/** The IOHook provider which handles connections on this socket,
+	 * NULL if there is none.
+	 */
+	dynamic_reference_nocheck<IOHookProvider> iohookprov;
+
 	/** Create a new listening socket
 	 */
 	ListenSocket(ConfigTag* tag, const irc::sockets::sockaddrs& bind_to);
-	/** Handle an I/O event
-	 */
-	void HandleEvent(EventType et, int errornum = 0);
 	/** Close the socket
 	 */
 	~ListenSocket();
 
-	/** Handles sockets internals crap of a connection, convenience wrapper really
+	/** Handles new connections, called by the socket engine
 	 */
-	void AcceptInternal();
+	void OnEventHandlerRead() CXX11_OVERRIDE;
+
+	/** Inspects the bind block belonging to this socket to set the name of the IO hook
+	 * provider which this socket will use for incoming connections.
+	 * @return True if the IO hook provider was found or none was given, false otherwise.
+	 */
+	bool ResetIOHookProvider();
 };
-
-#endif
-

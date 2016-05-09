@@ -21,8 +21,6 @@
 
 #include "inspircd.h"
 
-/* $ModDesc: Provides support for USERIP command */
-
 /** Handle /USERIP
  */
 class CommandUserip : public Command
@@ -30,19 +28,19 @@ class CommandUserip : public Command
  public:
 	CommandUserip(Module* Creator) : Command(Creator,"USERIP", 1)
 	{
-		syntax = "<nick>{,<nick>}";
+		syntax = "<nick> [<nick> ...]";
 	}
 
 	CmdResult Handle (const std::vector<std::string> &parameters, User *user)
 	{
-		std::string retbuf = "340 " + user->nick + " :";
+		std::string retbuf;
 		int nicks = 0;
 		bool checked_privs = false;
 		bool has_privs = false;
 
 		for (int i = 0; i < (int)parameters.size(); i++)
 		{
-			User *u = ServerInstance->FindNick(parameters[i]);
+			User *u = ServerInstance->FindNickOnly(parameters[i]);
 			if ((u) && (u->registered == REG_ALL))
 			{
 				// Anyone may query their own IP
@@ -54,15 +52,15 @@ class CommandUserip : public Command
 						checked_privs = true;
 						has_privs = user->HasPrivPermission("users/auspex");
 						if (!has_privs)
-							user->WriteNumeric(ERR_NOPRIVILEGES, "%s :Permission Denied - You do not have the required operator privileges",user->nick.c_str());
+							user->WriteNumeric(ERR_NOPRIVILEGES, "Permission Denied - You do not have the required operator privileges");
 					}
 
 					if (!has_privs)
 						continue;
 				}
 
-				retbuf = retbuf + u->nick + (IS_OPER(u) ? "*" : "") + "=";
-				if (IS_AWAY(u))
+				retbuf = retbuf + u->nick + (u->IsOper() ? "*" : "") + "=";
+				if (u->IsAway())
 					retbuf += "-";
 				else
 					retbuf += "+";
@@ -72,7 +70,7 @@ class CommandUserip : public Command
 		}
 
 		if (nicks != 0)
-			user->WriteServ(retbuf);
+			user->WriteNumeric(RPL_USERIP, retbuf);
 
 		return CMD_SUCCESS;
 	}
@@ -87,28 +85,15 @@ class ModuleUserIP : public Module
 	{
 	}
 
-	void init()
+	void On005Numeric(std::map<std::string, std::string>& tokens) CXX11_OVERRIDE
 	{
-		ServerInstance->Modules->AddService(cmd);
-		Implementation eventlist[] = { I_On005Numeric };
-		ServerInstance->Modules->Attach(eventlist, this, sizeof(eventlist)/sizeof(Implementation));
+		tokens["USERIP"];
 	}
 
-	virtual void On005Numeric(std::string &output)
-	{
-		output = output + " USERIP";
-	}
-
-	virtual ~ModuleUserIP()
-	{
-	}
-
-	virtual Version GetVersion()
+	Version GetVersion() CXX11_OVERRIDE
 	{
 		return Version("Provides support for USERIP command",VF_VENDOR);
 	}
-
 };
 
 MODULE_INIT(ModuleUserIP)
-

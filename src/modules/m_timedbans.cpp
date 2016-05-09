@@ -20,9 +20,8 @@
  */
 
 
-/* $ModDesc: Adds timed bans */
-
 #include "inspircd.h"
+#include "listmode.h"
 
 /** Holds a timed ban
  */
@@ -32,6 +31,7 @@ class TimedBan
 	std::string channel;
 	std::string mask;
 	time_t expire;
+	Channel* chan;
 };
 
 typedef std::vector<TimedBan> timedbans;
@@ -41,11 +41,30 @@ timedbans TimedBanList;
  */
 class CommandTban : public Command
 {
+	ChanModeReference banmode;
+
+	bool IsBanSet(Channel* chan, const std::string& mask)
+	{
+		ListModeBase* banlm = static_cast<ListModeBase*>(*banmode);
+		const ListModeBase::ModeList* bans = banlm->GetList(chan);
+		if (bans)
+		{
+			for (ListModeBase::ModeList::const_iterator i = bans->begin(); i != bans->end(); ++i)
+			{
+				const ListModeBase::ListItem& ban = *i;
+				if (!strcasecmp(ban.mask.c_str(), mask.c_str()))
+					return true;
+			}
+		}
+
+		return false;
+	}
+
  public:
 	CommandTban(Module* Creator) : Command(Creator,"TBAN", 3)
+		, banmode(Creator, "ban")
 	{
 		syntax = "<channel> <duration> <banmask>";
-		TRANSLATE4(TR_TEXT, TR_TEXT, TR_TEXT, TR_END);
 	}
 
 	CmdResult Handle (const std::vector<std::string> &parameters, User *user)
@@ -53,51 +72,52 @@ class CommandTban : public Command
 		Channel* channel = ServerInstance->FindChan(parameters[0]);
 		if (!channel)
 		{
-			user->WriteNumeric(401, "%s %s :No such channel",user->nick.c_str(), parameters[0].c_str());
+			user->WriteNumeric(Numerics::NoSuchNick(parameters[0]));
 			return CMD_FAILURE;
 		}
 		int cm = channel->GetPrefixValue(user);
 		if (cm < HALFOP_VALUE)
 		{
-			user->WriteNumeric(482, "%s %s :You do not have permission to set bans on this channel",
-				user->nick.c_str(), channel->name.c_str());
+			user->WriteNumeric(ERR_CHANOPRIVSNEEDED, channel->name, "You do not have permission to set bans on this channel");
 			return CMD_FAILURE;
-		}		
+		}
 
 		TimedBan T;
 		std::string channelname = parameters[0];
-		long duration = ServerInstance->Duration(parameters[1]);
+		unsigned long duration = InspIRCd::Duration(parameters[1]);
 		unsigned long expire = duration + ServerInstance->Time();
 		if (duration < 1)
 		{
-			user->WriteServ("NOTICE "+user->nick+" :Invalid ban time");
+			user->WriteNotice("Invalid ban time");
 			return CMD_FAILURE;
 		}
 		std::string mask = parameters[2];
-		std::vector<std::string> setban;
-		setban.push_back(parameters[0]);
-		setban.push_back("+b");
 		bool isextban = ((mask.size() > 2) && (mask[1] == ':'));
-		if (!isextban && !ServerInstance->IsValidMask(mask))
+		if (!isextban && !InspIRCd::IsValidMask(mask))
 			mask.append("!*@*");
-		if ((mask.length() > 250) || (!ServerInstance->IsValidMask(mask) && !isextban))
+
+		if (IsBanSet(channel, mask))
 		{
-			user->WriteServ("NOTICE "+user->nick+" :Invalid ban mask");
+			user->WriteNotice("Ban already set");
 			return CMD_FAILURE;
 		}
-		setban.push_back(mask);
-		// use CallHandler to make it so that the user sets the mode
-		// themselves
-		ServerInstance->Parser->CallHandler("MODE",setban,user);
-		for (BanList::iterator i = channel->bans.begin(); i != channel->bans.end(); i++)
-			if (!strcasecmp(i->data.c_str(), mask.c_str()))
-				goto found;
-		return CMD_FAILURE;
-found:
+
+		Modes::ChangeList setban;
+		setban.push_add(ServerInstance->Modes->FindMode('b', MODETYPE_CHANNEL), mask);
+		// Pass the user (instead of ServerInstance->FakeClient) to ModeHandler::Process() to
+		// make it so that the user sets the mode themselves
+		ServerInstance->Modes->Process(user, channel, NULL, setban);
+		if (ServerInstance->Modes->GetLastParse().empty())
+		{
+			user->WriteNotice("Invalid ban mask");
+			return CMD_FAILURE;
+		}
+
 		CUList tmp;
 		T.channel = channelname;
 		T.mask = mask;
 		T.expire = expire + (IS_REMOTE(user) ? 5 : 0);
+		T.chan = channel;
 		TimedBanList.push_back(T);
 
 		// If halfop is loaded, send notice to halfops and above, otherwise send to ops and above
@@ -114,27 +134,22 @@ found:
 	}
 };
 
-class ModuleTimedBans : public Module
+class BanWatcher : public ModeWatcher
 {
-	CommandTban cmd;
  public:
-	ModuleTimedBans()
-		: cmd(this)
+	BanWatcher(Module* parent)
+		: ModeWatcher(parent, "ban", MODETYPE_CHANNEL)
 	{
 	}
 
-	void init()
+	void AfterMode(User* source, User* dest, Channel* chan, const std::string& banmask, bool adding)
 	{
-		ServerInstance->Modules->AddService(cmd);
-		Implementation eventlist[] = { I_OnDelBan, I_OnBackgroundTimer };
-		ServerInstance->Modules->Attach(eventlist, this, sizeof(eventlist)/sizeof(Implementation));
-	}
+		if (adding)
+			return;
 
-	virtual ModResult OnDelBan(User* source, Channel* chan, const std::string &banmask)
-	{
 		irc::string listitem = banmask.c_str();
 		irc::string thischan = chan->name.c_str();
-		for (timedbans::iterator i = TimedBanList.begin(); i != TimedBanList.end(); i++)
+		for (timedbans::iterator i = TimedBanList.begin(); i != TimedBanList.end(); ++i)
 		{
 			irc::string target = i->mask.c_str();
 			irc::string tchan = i->channel.c_str();
@@ -144,10 +159,38 @@ class ModuleTimedBans : public Module
 				break;
 			}
 		}
-		return MOD_RES_PASSTHRU;
+	}
+};
+
+class ChannelMatcher
+{
+	Channel* const chan;
+
+ public:
+	ChannelMatcher(Channel* ch)
+		: chan(ch)
+	{
 	}
 
-	virtual void OnBackgroundTimer(time_t curtime)
+	bool operator()(const TimedBan& tb) const
+	{
+		return (tb.chan == chan);
+	}
+};
+
+class ModuleTimedBans : public Module
+{
+	CommandTban cmd;
+	BanWatcher banwatcher;
+
+ public:
+	ModuleTimedBans()
+		: cmd(this)
+		, banwatcher(this)
+	{
+	}
+
+	void OnBackgroundTimer(time_t curtime) CXX11_OVERRIDE
 	{
 		timedbans expired;
 		for (timedbans::iterator i = TimedBanList.begin(); i != TimedBanList.end();)
@@ -168,26 +211,28 @@ class ModuleTimedBans : public Module
 			Channel* cr = ServerInstance->FindChan(chan);
 			if (cr)
 			{
-				std::vector<std::string> setban;
-				setban.push_back(chan);
-				setban.push_back("-b");
-				setban.push_back(mask);
-
 				CUList empty;
 				std::string expiry = "*** Timed ban on " + chan + " expired.";
 				cr->WriteAllExcept(ServerInstance->FakeClient, true, '@', empty, "NOTICE %s :%s", cr->name.c_str(), expiry.c_str());
 				ServerInstance->PI->SendChannelNotice(cr, '@', expiry);
 
-				ServerInstance->SendGlobalMode(setban, ServerInstance->FakeClient);
+				Modes::ChangeList setban;
+				setban.push_remove(ServerInstance->Modes->FindMode('b', MODETYPE_CHANNEL), mask);
+				ServerInstance->Modes->Process(ServerInstance->FakeClient, cr, NULL, setban);
 			}
 		}
 	}
 
-	virtual Version GetVersion()
+	void OnChannelDelete(Channel* chan)
+	{
+		// Remove all timed bans affecting the channel from internal bookkeeping
+		TimedBanList.erase(std::remove_if(TimedBanList.begin(), TimedBanList.end(), ChannelMatcher(chan)), TimedBanList.end());
+	}
+
+	Version GetVersion() CXX11_OVERRIDE
 	{
 		return Version("Adds timed bans", VF_COMMON | VF_VENDOR);
 	}
 };
 
 MODULE_INIT(ModuleTimedBans)
-

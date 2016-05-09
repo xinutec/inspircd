@@ -1,3 +1,10 @@
+### Important Notice
+
+The `master` branch contains the latest development version. If you are running
+a server then you probably want the `insp20` branch. You can obtain this from
+the [releases](https://github.com/inspircd/inspircd/releases) page or by running
+`git checkout insp20` if you are installing via Git.
+
 ### About
 
 InspIRCd is a modular Internet Relay Chat (IRC) server written in C++ for Linux,
@@ -18,4 +25,4 @@ many different users.
 
 * [Website](http://inspircd.org)
 * [GitHub](https://github.com/inspircd)
-* [IRC](irc://irc.chatspike.net/inspircd)
+* IRC: \#inspircd on irc.inspircd.org

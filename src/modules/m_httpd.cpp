@@ -23,16 +23,15 @@
 
 
 #include "inspircd.h"
-#include "httpd.h"
-
-/* $ModDesc: Provides HTTP serving facilities to modules */
-/* $ModDep: httpd.h */
+#include "iohook.h"
+#include "modules/httpd.h"
 
 class ModuleHttpServer;
 
 static ModuleHttpServer* HttpModule;
-static bool claimed;
-static std::set<HttpServerSocket*> sockets;
+static insp::intrusive_list<HttpServerSocket> sockets;
+static Events::ModuleEventProvider* aclevprov;
+static Events::ModuleEventProvider* reqevprov;
 
 /** HTTP socket states
  */
@@ -45,7 +44,7 @@ enum HttpState
 
 /** A socket used for HTTP transport
  */
-class HttpServerSocket : public BufferedSocket
+class HttpServerSocket : public BufferedSocket, public Timer, public insp::intrusive_list_node<HttpServerSocket>
 {
 	HttpState InternalState;
 	std::string ip;
@@ -58,16 +57,29 @@ class HttpServerSocket : public BufferedSocket
 	std::string uri;
 	std::string http_version;
 
- public:
+	/** True if this object is in the cull list
+	 */
+	bool waitingcull;
 
-	HttpServerSocket(int newfd, const std::string& IP, ListenSocket* via, irc::sockets::sockaddrs* client, irc::sockets::sockaddrs* server)
-		: BufferedSocket(newfd), ip(IP), postsize(0)
+	bool Tick(time_t currtime) CXX11_OVERRIDE
 	{
-		InternalState = HTTP_SERVE_WAIT_REQUEST;
+		AddToCull();
+		return false;
+	}
 
-		FOREACH_MOD(I_OnHookIO, OnHookIO(this, via));
-		if (GetIOHook())
-			GetIOHook()->OnStreamSocketAccept(this, client, server);
+ public:
+	HttpServerSocket(int newfd, const std::string& IP, ListenSocket* via, irc::sockets::sockaddrs* client, irc::sockets::sockaddrs* server, unsigned int timeoutsec)
+		: BufferedSocket(newfd)
+		, Timer(timeoutsec)
+		, InternalState(HTTP_SERVE_WAIT_REQUEST)
+		, ip(IP)
+		, postsize(0)
+		, waitingcull(false)
+	{
+		ServerInstance->Timers.AddTimer(this);
+
+		if (via->iohookprov)
+			via->iohookprov->OnAccept(this, client, server);
 	}
 
 	~HttpServerSocket()
@@ -75,9 +87,9 @@ class HttpServerSocket : public BufferedSocket
 		sockets.erase(this);
 	}
 
-	virtual void OnError(BufferedSocketError)
+	void OnError(BufferedSocketError) CXX11_OVERRIDE
 	{
-		ServerInstance->GlobalCulls.AddItem(this);
+		AddToCull();
 	}
 
 	std::string Response(int response)
@@ -105,7 +117,7 @@ class HttpServerSocket : public BufferedSocket
 			case 300:
 				return "MULTIPLE CHOICES";
 			case 301:
-				return "MOVED PERMENANTLY";
+				return "MOVED PERMANENTLY";
 			case 302:
 				return "FOUND";
 			case 303:
@@ -186,13 +198,8 @@ class HttpServerSocket : public BufferedSocket
 
 		WriteData(http_version + " "+ConvToStr(response)+" "+Response(response)+"\r\n");
 
-		time_t local = ServerInstance->Time();
-		struct tm *timeinfo = gmtime(&local);
-		char *date = asctime(timeinfo);
-		date[strlen(date) - 1] = '\0';
-		rheaders.CreateHeader("Date", date);
-
-		rheaders.CreateHeader("Server", BRANCH);
+		rheaders.CreateHeader("Date", InspIRCd::TimeString(ServerInstance->Time(), "%a, %d %b %Y %H:%M:%S GMT", true));
+		rheaders.CreateHeader("Server", INSPIRCD_BRANCH);
 		rheaders.SetHeader("Content-Length", ConvToStr(size));
 
 		if (size)
@@ -223,7 +230,7 @@ class HttpServerSocket : public BufferedSocket
 
 			if (reqbuffer.length() >= 8192)
 			{
-				ServerInstance->Logs->Log("m_httpd",DEBUG, "m_httpd dropped connection due to an oversized request buffer");
+				ServerInstance->Logs->Log(MODNAME, LOG_DEBUG, "m_httpd dropped connection due to an oversized request buffer");
 				reqbuffer.clear();
 				SetError("Buffer");
 			}
@@ -263,7 +270,7 @@ class HttpServerSocket : public BufferedSocket
 				continue;
 			}
 
-			std::string cheader = reqbuffer.substr(hbegin, hend - hbegin);
+			std::string cheader(reqbuffer, hbegin, hend - hbegin);
 
 			std::string::size_type fieldsep = cheader.find(':');
 			if ((fieldsep == std::string::npos) || (fieldsep == 0) || (fieldsep == cheader.length() - 1))
@@ -294,7 +301,7 @@ class HttpServerSocket : public BufferedSocket
 
 			if (reqbuffer.length() >= postsize)
 			{
-				postdata = reqbuffer.substr(0, postsize);
+				postdata.assign(reqbuffer, 0, postsize);
 				reqbuffer.erase(0, postsize);
 			}
 			else if (!reqbuffer.empty())
@@ -316,14 +323,14 @@ class HttpServerSocket : public BufferedSocket
 	{
 		InternalState = HTTP_SERVE_SEND_DATA;
 
-		claimed = false;
-		HTTPRequest acl((Module*)HttpModule, "httpd_acl", request_type, uri, &headers, this, ip, postdata);
-		acl.Send();
-		if (!claimed)
+		ModResult MOD_RESULT;
+		HTTPRequest acl(request_type, uri, &headers, this, ip, postdata);
+		FIRST_MOD_RESULT_CUSTOM(*aclevprov, HTTPACLEventListener, OnHTTPACLCheck, MOD_RESULT, (acl));
+		if (MOD_RESULT != MOD_RES_DENY)
 		{
-			HTTPRequest url((Module*)HttpModule, "httpd_url", request_type, uri, &headers, this, ip, postdata);
-			url.Send();
-			if (!claimed)
+			HTTPRequest url(request_type, uri, &headers, this, ip, postdata);
+			FIRST_MOD_RESULT_CUSTOM(*reqevprov, HTTPRequestEventListener, OnHTTPRequest, MOD_RESULT, (url));
+			if (MOD_RESULT == MOD_RES_PASSTHRU)
 			{
 				SendHTTPError(404);
 			}
@@ -335,52 +342,96 @@ class HttpServerSocket : public BufferedSocket
 		SendHeaders(n->str().length(), response, *hheaders);
 		WriteData(n->str());
 	}
+
+	void AddToCull()
+	{
+		if (waitingcull)
+			return;
+
+		waitingcull = true;
+		Close();
+		ServerInstance->GlobalCulls.AddItem(this);
+	}
+};
+
+class HTTPdAPIImpl : public HTTPdAPIBase
+{
+ public:
+	HTTPdAPIImpl(Module* parent)
+		: HTTPdAPIBase(parent)
+	{
+	}
+
+	void SendResponse(HTTPDocumentResponse& resp) CXX11_OVERRIDE
+	{
+		resp.src.sock->Page(resp.document, resp.responsecode, &resp.headers);
+	}
 };
 
 class ModuleHttpServer : public Module
 {
- public:
+	HTTPdAPIImpl APIImpl;
+	unsigned int timeoutsec;
+	Events::ModuleEventProvider acleventprov;
+	Events::ModuleEventProvider reqeventprov;
 
-	void init()
+ public:
+	ModuleHttpServer()
+		: APIImpl(this)
+		, acleventprov(this, "event/http-acl")
+		, reqeventprov(this, "event/http-request")
+	{
+		aclevprov = &acleventprov;
+		reqevprov = &reqeventprov;
+	}
+
+	void init() CXX11_OVERRIDE
 	{
 		HttpModule = this;
-		ServerInstance->Modules->Attach(I_OnAcceptConnection, this);
 	}
 
-	void OnRequest(Request& request)
+	void ReadConfig(ConfigStatus& status) CXX11_OVERRIDE
 	{
-		if (strcmp(request.id, "HTTP-DOC") != 0)
-			return;
-		HTTPDocumentResponse& resp = static_cast<HTTPDocumentResponse&>(request);
-		claimed = true;
-		resp.src.sock->Page(resp.document, resp.responsecode, &resp.headers);
+		ConfigTag* tag = ServerInstance->Config->ConfValue("httpd");
+		timeoutsec = tag->getInt("timeout", 10, 1);
 	}
 
-	ModResult OnAcceptConnection(int nfd, ListenSocket* from, irc::sockets::sockaddrs* client, irc::sockets::sockaddrs* server)
+	ModResult OnAcceptConnection(int nfd, ListenSocket* from, irc::sockets::sockaddrs* client, irc::sockets::sockaddrs* server) CXX11_OVERRIDE
 	{
 		if (from->bind_tag->getString("type") != "httpd")
 			return MOD_RES_PASSTHRU;
 		int port;
 		std::string incomingip;
 		irc::sockets::satoap(*client, incomingip, port);
-		sockets.insert(new HttpServerSocket(nfd, incomingip, from, client, server));
+		sockets.push_front(new HttpServerSocket(nfd, incomingip, from, client, server, timeoutsec));
 		return MOD_RES_ALLOW;
 	}
 
-	CullResult cull()
+	void OnUnloadModule(Module* mod)
 	{
-		std::set<HttpServerSocket*> local;
-		local.swap(sockets);
-		for (std::set<HttpServerSocket*>::const_iterator i = local.begin(); i != local.end(); ++i)
+		for (insp::intrusive_list<HttpServerSocket>::const_iterator i = sockets.begin(); i != sockets.end(); )
 		{
 			HttpServerSocket* sock = *i;
-			sock->cull();
-			delete sock;
+			++i;
+			if (sock->GetIOHook() && sock->GetIOHook()->prov->creator == mod)
+			{
+				sock->cull();
+				delete sock;
+			}
+		}
+	}
+
+	CullResult cull() CXX11_OVERRIDE
+	{
+		for (insp::intrusive_list<HttpServerSocket>::const_iterator i = sockets.begin(); i != sockets.end(); ++i)
+		{
+			HttpServerSocket* sock = *i;
+			sock->AddToCull();
 		}
 		return Module::cull();
 	}
 
-	virtual Version GetVersion()
+	Version GetVersion() CXX11_OVERRIDE
 	{
 		return Version("Provides HTTP serving facilities to modules", VF_VENDOR);
 	}

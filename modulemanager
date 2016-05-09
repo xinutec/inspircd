@@ -22,22 +22,20 @@
 use strict;
 use warnings FATAL => qw(all);
 
-use make::configure;
+use make::common;
 
+BEGIN {
+	unless (module_installed("LWP::Simple")) {
+		die "Your system is missing the LWP::Simple Perl module!";
+	}
+	unless (module_installed("Crypt::SSLeay") || module_installed("IO::Socket::SSL")) {
+		die "Your system is missing the Crypt::SSLeay or IO::Socket::SSL Perl modules!";
+	}
 
-if (!module_installed("LWP::Simple"))
-{
-	die "Your system is missing the LWP::Simple Perl module!";
 }
 
-if (!module_installed("Crypt::SSLeay") && !module_installed("IO::Socket::SSL"))
-{
-	die "Your system is missing the Crypt::SSLeay or IO::Socket::SSL Perl modules!";
-}
-
+use File::Basename;
 use LWP::Simple;
-
-our @modlist;
 
 my %installed;
 # $installed{name} = $version
@@ -58,15 +56,20 @@ sub parse_url;
 
 # retrieve and parse entries from sources.list
 sub parse_url {
-	my $src = shift;
+	chomp(my $src = shift);
 	return if $url_seen{$src};
 	$url_seen{$src}++;
 
-	my $doc = get($src);
-	die "Could not retrieve $_" unless defined $doc;
+	my $ua = LWP::UserAgent->new(ssl_opts => { verify_hostname => 0 });
+	my $response = $ua->get($src);
+
+	unless ($response->is_success) {
+		my $err = $response->message;
+		die "Could not retrieve $src: $err";
+	}
 
 	my $mod;
-	for (split /\n+/, $doc) {
+	for (split /\n+/, $response->decoded_content) {
 		s/^\s+//; # ignore whitespace at start
 		next if /^#/;
 		if (/^module (\S+) (\S+) (\S+)/) {
@@ -128,8 +131,6 @@ while (<SRC>) {
 }
 close SRC;
 
-getmodules(1);
-
 # determine core version
 `./src/version.sh` =~ /InspIRCd-([0-9.]+)/ or die "Cannot determine inspircd version";
 $installed{core} = $1;
@@ -153,9 +154,8 @@ $modules{core}{$1} = {
 };
 
 # set up core module list
-for my $modname (@modlist) {
-	my $mod = "m_$modname";
-	my $modfile = "src/modules/$mod.cpp";
+for my $modname (<src/modules/m_*.cpp>) {
+	my $mod = basename($modname, '.cpp');
 	my $ver = getmodversion($mod) || '0.0';
 	$ver =~ s/\$Rev: (.*) \$/$1/; # for storing revision in SVN
 	$installed{$mod} = $ver;
@@ -262,7 +262,7 @@ sub resolve_deps {
 	}
 }
 
-my $action = $#ARGV > 0 ? lc shift @ARGV : 'help';
+my $action = $#ARGV >= 0 ? lc shift @ARGV : 'help';
 
 if ($action eq 'install') {
 	for my $mod (@ARGV) {
@@ -345,11 +345,16 @@ for my $mod (sort keys %todo) {
 	}
 	$mod_versions{$mod} = $ver;
 
-	my $stat = getstore($url, "src/modules/$mod.cpp");
-	if ($stat == 200) {
+	my $ua = LWP::UserAgent->new(ssl_opts => { verify_hostname => 0 });
+	my $response = $ua->get($url);
+
+	if ($response->is_success) {
+		open(MF, ">src/modules/$mod.cpp") or die "\nFilesystem not writable: $!";
+		print MF $response->decoded_content;
+		close(MF);
 		print " - done\n";
 	} else {
-		print " - HTTP $stat\n";
+		printf "\nHTTP %s: %s\n", $response->code, $response->message;
 	}
 }
 

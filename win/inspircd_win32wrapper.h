@@ -19,18 +19,16 @@
  */
 
 
+#pragma once
+
 /* Windows Port
    Wrapper Functions/Definitions
    By Burlex */
-
-#ifndef INSPIRCD_WIN32WRAPPER_H
-#define INSPIRCD_WIN32WRAPPER_H
-
 /*
  * Starting with PSAPI version 2 for Windows 7 and Windows Server 2008 R2, this function is defined as K32GetProcessMemoryInfo in Psapi.h and exported
  * in Kernel32.lib and Kernel32.dll. However, you should always call this function as GetProcessMemoryInfo. To ensure correct resolution of symbols
  * for programs that will run on earlier versions of Windows, add Psapi.lib to the TARGETLIBS macro and compile the program with PSAPI_VERSION=1.
- * 
+ *
  * We do this before anything to make sure it's done.
  */
 #define PSAPI_VERSION 1
@@ -44,9 +42,6 @@
 /* Make builds smaller, leaner and faster */
 #define VC_EXTRALEAN
 #define WIN32_LEAN_AND_MEAN
-
-/* They just have to be *different*, don't they. */
-#define PATH_MAX MAX_PATH
 
 /* Macros for exporting symbols - dependant on what is being compiled */
 
@@ -63,6 +58,7 @@
 
 /* Disable the deprecation warnings.. it spams :P */
 #define _CRT_SECURE_NO_DEPRECATE
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
 
 /* Normal windows (platform-specific) includes */
 #include <winsock2.h>
@@ -73,10 +69,23 @@
 #include <sys/stat.h>
 #include <direct.h>
 #include <process.h>
+#include <io.h>
+
+#define F_OK            0       /* test for existence of file */
+#define X_OK            (1<<0)  /* test for execute or search permission */
+#define W_OK            (1<<1)  /* test for write permission */
+#define R_OK            (1<<2)  /* test for read permission */
+
+// Windows defines these already.
+#undef ERROR
+#undef min
+#undef max
 
 /* strcasecmp is not defined on windows by default */
 #define strcasecmp _stricmp
 #define strncasecmp _strnicmp
+
+typedef int ssize_t;
 
 /* Convert formatted (xxx.xxx.xxx.xxx) string to in_addr struct */
 CoreExport int insp_inet_pton(int af, const char * src, void * dst);
@@ -88,9 +97,15 @@ CoreExport const char * insp_inet_ntop(int af, const void * src, char * dst, soc
 #define inet_pton insp_inet_pton
 #define inet_ntop insp_inet_ntop
 
-/* Safe printf functions aren't defined in VC++ */
+/* Safe printf functions aren't defined in VC++ releases older than v14 */
+#if _MSC_VER <= 1800
 #define snprintf _snprintf
 #define vsnprintf _vsnprintf
+#endif
+
+#ifndef va_copy
+#define va_copy(dest, src) (dest = src)
+#endif
 
 /* Unix-style sleep (argument is in seconds) */
 __inline void sleep(int seconds) { Sleep(seconds * 1000); }
@@ -99,9 +114,12 @@ __inline void sleep(int seconds) { Sleep(seconds * 1000); }
 #define popen _popen
 #define pclose _pclose
 
+/* _access */
+#define access _access
+
 /* IPV4 only convert string to address struct */
 __inline int inet_aton(const char *cp, struct in_addr *addr)
-{ 
+{
 	addr->s_addr = inet_addr(cp);
 	return (addr->s_addr == INADDR_NONE) ? 0 : 1;
 };
@@ -134,11 +152,13 @@ struct DIR
 	bool first;
 };
 
+#if _MSC_VER <= 1800
 struct timespec
 {
 	time_t tv_sec;
 	long tv_nsec;
 };
+#endif
 
 CoreExport DIR * opendir(const char * path);
 CoreExport dirent * readdir(DIR * handle);
@@ -184,8 +204,6 @@ CoreExport void closedir(DIR * handle);
 void * ::operator new(size_t iSize);
 void ::operator delete(void * ptr);
 
-#define DISABLE_WRITEV
-
 #include <exception>
 
 class CWin32Exception : public std::exception
@@ -201,5 +219,29 @@ private:
 	DWORD dwErrorCode;
 };
 
-#endif
+// Same value as EXIT_STATUS_FORK (EXIT_STATUS_FORK is unused on Windows)
+#define EXIT_STATUS_SERVICE 4
 
+// POSIX iovec
+struct iovec
+{
+	void* iov_base; // Starting address
+	size_t iov_len; // Number of bytes to transfer
+};
+
+// Windows WSABUF with POSIX field names
+struct WindowsIOVec
+{
+	// POSIX iovec has iov_base then iov_len, WSABUF in Windows has the fields in reverse order
+	u_long iov_len; // Number of bytes to transfer
+	char FAR* iov_base; // Starting address
+};
+
+inline ssize_t writev(int fd, const WindowsIOVec* iov, int count)
+{
+	DWORD sent;
+	int ret = WSASend(fd, reinterpret_cast<LPWSABUF>(const_cast<WindowsIOVec*>(iov)), count, &sent, 0, NULL, NULL);
+	if (ret == 0)
+		return sent;
+	return -1;
+}

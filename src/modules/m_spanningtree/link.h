@@ -18,8 +18,7 @@
  */
 
 
-#ifndef M_SPANNINGTREE_LINK_H
-#define M_SPANNINGTREE_LINK_H
+#pragma once
 
 class Link : public refcountbase
 {
@@ -31,7 +30,7 @@ class Link : public refcountbase
 	std::string SendPass;
 	std::string RecvPass;
 	std::string Fingerprint;
-	std::string AllowMask;
+	std::vector<std::string> AllowMasks;
 	bool HiddenFromStats;
 	std::string Hook;
 	int Timeout;
@@ -51,5 +50,3 @@ class Autoconnect : public refcountbase
 	int position;
 	Autoconnect(ConfigTag* Tag) : tag(Tag) {}
 };
-
-#endif

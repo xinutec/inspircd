@@ -20,27 +20,25 @@
 #
 
 
-package make::utilities;
+BEGIN {
+	require 5.8.0;
+}
 
-require 5.8.0;
+package make::utilities;
 
 use strict;
 use warnings FATAL => qw(all);
 
 use Exporter 'import';
-use POSIX;
-use Getopt::Long;
 use Fcntl;
+use File::Path;
+use File::Temp;
+use Getopt::Long;
+use POSIX;
+
 our @EXPORT = qw(make_rpath pkgconfig_get_include_dirs pkgconfig_get_lib_dirs pkgconfig_check_version translate_functions promptstring);
 
-# Parse the output of a *_config program,
-# such as pcre_config, take out the -L
-# directive and return an rpath for it.
-
-# \e[1;32msrc/Makefile\e[0m
-
 my %already_added = ();
-my $if_skip_lines = 0;
 
 sub promptstring($$$$$)
 {
@@ -76,6 +74,7 @@ sub promptstring($$$$$)
 sub make_rpath($;$)
 {
 	my ($executable, $module) = @_;
+	return "" if defined $ENV{DISABLE_RPATH};
 	chomp(my $data = `$executable`);
 	my $output = "";
 	while ($data =~ /-L(\S+)/)
@@ -83,41 +82,18 @@ sub make_rpath($;$)
 		my $libpath = $1;
 		if (!exists $already_added{$libpath})
 		{
-			print "Adding extra library path to \e[1;32m$module\e[0m ... \e[1;32m$libpath\e[0m\n";
+			print "Adding runtime library path to \e[1;32m$module\e[0m ... \e[1;32m$libpath\e[0m\n";
 			$already_added{$libpath} = 1;
 		}
-		$output .= "-Wl,--rpath -Wl,$libpath -L$libpath " unless defined $main::opt_disablerpath;
+		$output .= "-Wl,-rpath -Wl,$libpath -L$libpath ";
 		$data =~ s/-L(\S+)//;
 	}
 	return $output;
 }
 
-sub extend_pkg_path()
-{
-	if (!exists $ENV{PKG_CONFIG_PATH})
-	{
-		$ENV{PKG_CONFIG_PATH} = "/usr/lib/pkgconfig:/usr/local/lib/pkgconfig:/usr/local/libdata/pkgconfig:/usr/X11R6/libdata/pkgconfig";
-	}
-	else
-	{
-		$ENV{PKG_CONFIG_PATH} .= ":/usr/local/lib/pkgconfig:/usr/local/libdata/pkgconfig:/usr/X11R6/libdata/pkgconfig";
-	}
-}
-
 sub pkgconfig_get_include_dirs($$$;$)
 {
 	my ($packagename, $headername, $defaults, $module) = @_;
-
-	my $key = "default_includedir_$packagename";
-	if (exists $main::config{$key})
-	{
-		print "Locating include directory for package \e[1;32m$packagename\e[0m for module \e[1;32m$module\e[0m... ";
-		my $ret = $main::config{$key};
-		print "\e[1;32m$ret\e[0m (cached)\n";
-		return $ret;
-	}
-
-	extend_pkg_path();
 
 	print "Locating include directory for package \e[1;32m$packagename\e[0m for module \e[1;32m$module\e[0m... ";
 
@@ -127,7 +103,8 @@ sub pkgconfig_get_include_dirs($$$;$)
 	if ((!defined $v) || ($v eq ""))
 	{
 		print "\e[31mCould not find $packagename via pkg-config\e[m (\e[1;32mplease install pkg-config\e[m)\n";
-		$foo = `locate "$headername" 2>/dev/null | head -n 1`;
+		my $locbin = $^O eq 'solaris' ? 'slocate' : 'locate';
+		$foo = `$locbin "$headername" 2>/dev/null | head -n 1`;
 		my $find = $foo =~ /(.+)\Q$headername\E/ ? $1 : '';
 		chomp($find);
 		if ((defined $find) && ($find ne "") && ($find ne $packagename))
@@ -190,8 +167,6 @@ sub pkgconfig_check_version($$;$)
 {
 	my ($packagename, $version, $module) = @_;
 
-	extend_pkg_path();
-
 	print "Checking version of package \e[1;32m$packagename\e[0m is >= \e[1;32m$version\e[0m... ";
 
 	my $v = `pkg-config --modversion $packagename 2>/dev/null`;
@@ -223,17 +198,6 @@ sub pkgconfig_get_lib_dirs($$$;$)
 {
 	my ($packagename, $libname, $defaults, $module) = @_;
 
-	my $key = "default_libdir_$packagename";
-	if (exists $main::config{$key})
-	{
-		print "Locating library directory for package \e[1;32m$packagename\e[0m for module \e[1;32m$module\e[0m... ";
-		my $ret = $main::config{$key};
-		print "\e[1;32m$ret\e[0m (cached)\n";
-		return $ret;
-	}
-
-	extend_pkg_path();
-
 	print "Locating library directory for package \e[1;32m$packagename\e[0m for module \e[1;32m$module\e[0m... ";
 
 	my $v = `pkg-config --modversion $packagename 2>/dev/null`;
@@ -242,7 +206,8 @@ sub pkgconfig_get_lib_dirs($$$;$)
 	my $foo = "";
 	if ((!defined $v) || ($v eq ""))
 	{
-		$foo = `locate "$libname" | head -n 1`;
+		my $locbin = $^O eq 'solaris' ? 'slocate' : 'locate';
+		$foo = `$locbin "$libname" | head -n 1`;
 		$foo =~ /(.+)\Q$libname\E/;
 		my $find = $1;
 		chomp($find);
@@ -304,16 +269,6 @@ sub translate_functions($$)
 	{
 		$module =~ /modules*\/(.+?)$/;
 		$module = $1;
-
-		# This is only a cursory check, just designed to catch casual accidental use of backticks.
-		# There are pleanty of ways around it, but its not supposed to be for security, just checking
-		# that people are using the new configuration api as theyre supposed to and not just using
-		# backticks instead of eval(), being as eval has accountability. People wanting to get around
-		# the accountability will do so anyway.
-		if (($line =~ /`/) && ($line !~ /eval\(.+?`.+?\)/))
-		{
-			die "Developers should no longer use backticks in configuration macros. Please use exec() and eval() macros instead. Offending line: $line (In module: $module)";
-		}
 
 		if ($line =~ /ifuname\(\!"(\w+)"\)/)
 		{
@@ -391,13 +346,14 @@ sub translate_functions($$)
 			my $tmpfile;
 			do
 			{
-				$tmpfile = tmpnam();
+				$tmpfile = File::Temp::tmpnam();
 			} until sysopen(TF, $tmpfile, O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW, 0700);
 			print "(Created and executed \e[1;32m$tmpfile\e[0m)\n";
 			print TF $1;
 			close TF;
 			my $replace = `perl $tmpfile`;
 			chomp($replace);
+			unlink($tmpfile);
 			$line =~ s/eval\("(.+?)"\)/$replace/;
 		}
 		while ($line =~ /pkgconflibs\("(.+?)","(.+?)","(.+?)"\)/)
@@ -432,7 +388,6 @@ sub translate_functions($$)
 		while ($line =~ /rpath\("(.+?)"\)/)
 		{
 			my $replace = make_rpath($1,$module);
-			$replace = "" if ($^O =~ /darwin/i);
 			$line =~ s/rpath\("(.+?)"\)/$replace/;
 		}
 	};
@@ -444,7 +399,7 @@ sub translate_functions($$)
 		print "\nMake sure you have pkg-config installed\n";
 		print "\nIn the case of gnutls configuration errors on debian,\n";
 		print "Ubuntu, etc, you should ensure that you have installed\n";
-		print "gnutls-bin as well as gnutls-dev and gnutls.\n";
+		print "gnutls-bin as well as libgnutls-dev and libgnutls.\n";
 		exit;
 	}
 	else

@@ -1,18 +1,18 @@
 *~
+*.pem
 *.swp
 
-/.config.cache
-/.modulemanager
+.*
+!.git*
+
+/.configure
 /BSDmakefile
 /GNUmakefile
 /build
-/inspircd
-/org.inspircd.plist
+/docs/doxygen
 /run
-/bin
 
-/include/inspircd_config.h
-/include/inspircd_version.h
+/include/config.h
 
 /src/modules/m_geoip.cpp
 /src/modules/m_ldapauth.cpp
@@ -22,6 +22,7 @@
 /src/modules/m_pgsql.cpp
 /src/modules/m_regex_pcre.cpp
 /src/modules/m_regex_posix.cpp
+/src/modules/m_regex_re2.cpp
 /src/modules/m_regex_stdlib.cpp
 /src/modules/m_regex_tre.cpp
 /src/modules/m_sqlite3.cpp
