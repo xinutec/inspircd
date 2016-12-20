@@ -58,7 +58,7 @@ void Channel::SetTopic(User* u, const std::string& ntopic, time_t topicts, const
 	// Always update setter and set time
 	if (!setter)
 		setter = ServerInstance->Config->FullHostInTopic ? &u->GetFullHost() : &u->nick;
-	this->setby.assign(*setter, 0, 128);
+	this->setby.assign(*setter, 0, ServerInstance->Config->Limits.GetMaxMask());
 	this->topicset = topicts;
 
 	FOREACH_MOD(OnPostTopicChange, (u, this, this->topic));
@@ -138,7 +138,7 @@ void Channel::SetDefaultModes()
 			if (mode->IsPrefixMode())
 				continue;
 
-			if (mode->GetNumParams(true))
+			if (mode->NeedsParam(true))
 			{
 				list.GetToken(parameter);
 				// If the parameter begins with a ':' then it's invalid
@@ -148,7 +148,7 @@ void Channel::SetDefaultModes()
 			else
 				parameter.clear();
 
-			if ((mode->GetNumParams(true)) && (parameter.empty()))
+			if ((mode->NeedsParam(true)) && (parameter.empty()))
 				continue;
 
 			mode->OnModeChange(ServerInstance->FakeClient, ServerInstance->FakeClient, this, parameter, true);
@@ -181,7 +181,7 @@ Channel* Channel::JoinUser(LocalUser* user, std::string cname, bool override, co
 		{
 			unsigned int opermaxchans = ConvToInt(user->oper->getConfig("maxchans"));
 			// If not set, use 2.0's <channels:opers>, if that's not set either, use limit from CC
-			if (!opermaxchans)
+			if (!opermaxchans && user->HasPrivPermission("channels/high-join-limit"))
 				opermaxchans = ServerInstance->Config->OperMaxChans;
 			if (opermaxchans)
 				maxchans = opermaxchans;
@@ -611,20 +611,17 @@ unsigned int Membership::getRank()
 	return rv;
 }
 
-const char* Membership::GetAllPrefixChars() const
+std::string Membership::GetAllPrefixChars() const
 {
-	static char prefix[64];
-	int ctr = 0;
-
+	std::string ret;
 	for (std::string::const_iterator i = modes.begin(); i != modes.end(); ++i)
 	{
 		PrefixMode* mh = ServerInstance->Modes->FindPrefixMode(*i);
 		if (mh && mh->GetPrefix())
-			prefix[ctr++] = mh->GetPrefix();
+			ret.push_back(mh->GetPrefix());
 	}
-	prefix[ctr] = 0;
 
-	return prefix;
+	return ret;
 }
 
 unsigned int Channel::GetPrefixValue(User* user)

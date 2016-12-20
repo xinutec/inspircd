@@ -29,16 +29,13 @@ use warnings FATAL => qw(all);
 
 use File::Spec::Functions qw(abs2rel);
 
-use make::configure;
 use make::console;
+use make::directive;
 
 chdir $ENV{BUILDPATH};
 
 my $type = shift;
 my $out = shift;
-my $verbose = ($type =~ s/-v$//);
-
-our %config = read_configure_cache();
 
 if ($type eq 'gen-ld') {
 	do_static_find(@ARGV);
@@ -61,17 +58,23 @@ exit 1;
 
 sub message($$$) {
 	my ($type, $file, $command) = @_;
-	if ($verbose) {
+	if ($ENV{INSPIRCD_VERBOSE}) {
 		print "$command\n";
 	} else {
 		print_format "\t<|GREEN $type:|>\t\t$file\n";
 	}
 }
 
+sub rpath($) {
+	my $message = shift;
+	$message =~ s/-L(\S+)/-Wl,-rpath,$1 -L$1/g unless defined $ENV{INSPIRCD_DISABLE_RPATH};
+	return $message;
+}
+
 sub do_static_find {
 	my @flags;
 	for my $file (@ARGV) {
-		push @flags, get_property($file, 'LinkerFlags');
+		push @flags, rpath(get_directive($file, 'LinkerFlags', ''));
 	}
 	open F, '>', $out;
 	print F join ' ', @flags;
@@ -81,18 +84,19 @@ sub do_static_find {
 
 sub do_static_link {
 	my $execstr = "$ENV{CXX} -o $out $ENV{CORELDFLAGS}";
+	my $link_flags = '';
 	for (@ARGV) {
 		if (/\.cmd$/) {
 			open F, '<', $_;
 			my $libs = <F>;
 			chomp $libs;
-			$execstr .= ' '.$libs;
+			$link_flags .= ' '.$libs;
 			close F;
 		} else {
 			$execstr .= ' '.$_;
 		}
 	}
-	$execstr .= ' '.$ENV{LDLIBS};
+	$execstr .= ' '.$ENV{LDLIBS}.' '.$link_flags;
 	message 'LINK', $out, $execstr;
 	exec $execstr;
 }
@@ -106,7 +110,7 @@ sub do_core_link {
 sub do_link_dir {
 	my ($dir, $link_flags) = (shift, '');
 	for my $file (<$dir/*.cpp>) {
-		$link_flags .= get_property($file, 'LinkerFlags') . ' ';
+		$link_flags .= rpath(get_directive($file, 'LinkerFlags', '')) . ' ';
 	}
 	my $execstr = "$ENV{CXX} -o $out $ENV{PICLDFLAGS} $link_flags @_";
 	message 'LINK', $out, $execstr;
@@ -119,7 +123,7 @@ sub do_compile {
 	my $flags = '';
 	my $libs = '';
 	if ($do_compile) {
-		$flags = $ENV{CORECXXFLAGS} . ' ' . get_property($file, 'CompileFlags');
+		$flags = $ENV{CORECXXFLAGS} . ' ' . get_directive($file, 'CompilerFlags', '');
 
 		if ($file =~ m#(?:^|/)((?:m|core)_[^/. ]+)(?:\.cpp|/.*\.cpp)$#) {
 			$flags .= ' -DMODNAME=\\"'.$1.'\\"';
@@ -128,7 +132,7 @@ sub do_compile {
 
 	if ($do_link) {
 		$flags = join ' ', $flags, $ENV{PICLDFLAGS};
-		$libs = get_property($file, 'LinkerFlags');
+		$libs = rpath(get_directive($file, 'LinkerFlags', ''));
 	} else {
 		$flags .= ' -c';
 	}

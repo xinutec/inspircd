@@ -152,10 +152,13 @@
       # to this bind section.
       type="clients"
 
-      # ssl: If you want the port(s) in this bind tag to use SSL, set this
-      # to either "gnutls" or "openssl". The appropriate SSL module must be
-      # loaded for SSL to work. If you do not want the port(s) in this bind
-      # tag to support SSL, just remove or comment out this option.
+      # ssl: If you want the port(s) in this bind tag to use SSL, set this to
+      # the name of a custom <sslprofile> tag that you have defined or one
+      # of "openssl", "gnutls", "mbedtls" if you have not defined any. See the
+      # wiki page for the SSL module you are using for more details.
+      #
+      # You will need to load the ssl_openssl module for OpenSSL, ssl_gnutls
+      # for GnuTLS and ssl_mbedtls for mbedTLS.
       ssl="gnutls"
 
       # defer: When this is non-zero, connections will not be handed over to
@@ -168,45 +171,37 @@
       # To change it on a running bind, you'll have to comment it out,
       # rehash, comment it in and rehash again.
       defer="0"
+
+      # free: When this is enabled the listener will be created regardless of
+      # whether the interface that provides the bind address is available. This
+      # is useful for if you are starting InspIRCd on boot when the server may
+      # not have brought the network interfaces up yet.
+      free="no"
 >
 
 <bind address="" port="6660-6669" type="clients">
 
-# When linking servers, the OpenSSL and GnuTLS implementations are completely
-# link-compatible and can be used alongside each other
-# on each end of the link without any significant issues.
-# Supported SSL types are: "openssl" and "gnutls".
-# You must load the ssl_openssl module for OpenSSL or ssl_gnutls for GnuTLS.
+# Listener accepting HTML5 WebSocket connections.
+# Requires the websocket module and SHA-1 hashing support (provided by the sha1
+# module).
+#<bind address="" port="7002" type="clients" hook="websocket">
+
+# You can define a custom <sslprofile> tag which defines the SSL configuration
+# for this listener. See the wiki page for the SSL module you are using for
+# more details.
+#
+# Alternatively, you can use one of the default SSL profiles which are created
+# when you have not defined any:
+#   "openssl" (requires the ssl_openssl module)
+#   "gnutls" (requires the ssl_gnutls module)
+#   "mbedtls" (requires the ssl_mbedtls module)
+#
+# When linking servers, the OpenSSL, GnuTLS, and mbedTLS implementations are
+# completely link-compatible and can be used alongside each other on each end
+# of the link without any significant issues.
 
 <bind address="" port="7000,7001" type="servers">
 <bind address="1.2.3.4" port="7005" type="servers" ssl="openssl">
-
-
-#-#-#-#-#-#-#-#-#-#-  DIE/RESTART CONFIGURATION   -#-#-#-#-#-#-#-#-#-#-
-#                                                                     #
-#   You can configure the passwords here which you wish to use for    #
-#   the /DIE and /RESTART commands. Only trusted ircops who will      #
-#   need this ability should know the die and restart password.       #
-#                                                                     #
-
-<power
-       # hash: what hash these passwords are hashed with.
-       # Requires the module for selected hash (md5, sha256, or
-       # ripemd160) be loaded and the password hashing module
-       # (password_hash) loaded.
-       # Options here are: "md5", "sha256" and "ripemd160", or one of
-       # these prefixed with "hmac-", e.g.: "hmac-sha256".
-       # Optional, but recommended. Create hashed passwords with:
-       # /mkpasswd <hash> <password>
-       #hash="sha256"
-
-       # diepass: Password for opers to use if they need to shutdown (die)
-       # a server.
-       diepass=""
-
-       # restartpass: Password for opers to use if they need to restart
-       # a server.
-       restartpass="">
 
 
 #-#-#-#-#-#-#-#-#-#-  CONNECTIONS CONFIGURATION  -#-#-#-#-#-#-#-#-#-#-#
@@ -250,12 +245,14 @@
          # allow: What IP addresses/hosts to allow for this block.
          allow="203.0.113.*"
 
-         # hash: what hash this password is hashed with. requires the module
-         # for selected hash (md5, sha256 or ripemd160) be loaded and the
-         # password hashing module (password_hash) loaded.
-         # Optional, but recommended. Create hashed passwords with:
-         # /mkpasswd <hash> <password>
-         #hash="sha256"
+         # hash: the hash function this password is hashed with. Requires the
+         # module for the selected function (bcrypt, md5, sha1, sha256, or
+         # ripemd160) and the password hashing module (password_hash) to be
+         # loaded.
+         # You may also use any of the above other than bcrypt prefixed with
+         # either "hmac-" or "pbkdf2-hmac-" (requires the pbkdf2 module).
+         # Create hashed passwords with: /mkpasswd <hash> <password>
+         #hash="bcrypt"
 
          # password: Password to use for this block/user(s)
          password="secret"
@@ -321,9 +318,9 @@
          #   \017 or \x = Stop all color sequences
          allowmotdcolors="false"
 
-         # port: What port this user is allowed to connect on. (optional)
-         # The port MUST be set to listen in the bind blocks above.
-         port="6697">
+         # port: What port range this user is allowed to connect on. (optional)
+         # The ports MUST be set to listen in the bind blocks above.
+         port="6697,9999">
 
 <connect
          # name: Name to use for this connect block. Mainly used for
@@ -690,6 +687,9 @@
           # hidekills: If defined, replaces who set a /kill with a custom string.
           hidekills=""
 
+          # hideulinekills: Hide kills from clients of ulined servers from server notices.
+          hideulinekills="yes"
+
           # hidesplits: If enabled, non-opers will not be able to see which
           # servers split in a netsplit, they will only be able to see that one
           # occurred (If their client has netsplit detection).
@@ -884,11 +884,7 @@
          nick="ChanServ"
 
          # reason: Reason to display on /nick.
-         reason="Reserved For Services">
-
-<badnick nick="NickServ" reason="Reserved For Services">
-<badnick nick="OperServ" reason="Reserved For Services">
-<badnick nick="MemoServ" reason="Reserved For Services">
+         reason="Reserved for a network service">
 
 <badhost
          # host: ident@hostname to ban.
@@ -976,6 +972,20 @@
 # Settings similar to Charybdis IRCd defaults.
 #<include file="examples/modules/charybdis.conf.example">
 
+#-#-#-#-#-#-#-#-#-#-#-# SERVICES CONFIGURATION  #-#-#-#-#-#-#-#-#-#-#-#
+#                                                                     #
+# If you use services you will probably want to include one of the    #
+# following files which set up aliases, nick reservations and filter  #
+# exemptions for services pseudoclients:                              #
+#
+# Anope users should uncomment this:
+#<include file="examples/services/anope.conf.example">
+#
+# Atheme users should uncomment this:
+#<include file="examples/services/atheme.conf.example">
+#
+# Users of other services should uncomment this:
+#<include file="examples/services/generic.conf.example">
 
 #########################################################################
 #                                                                       #

@@ -185,6 +185,12 @@ class CoreExport ModeHandler : public ServiceProvider
 	PrefixMode* IsPrefixMode();
 
 	/**
+	 * Check whether this mode is a prefix mode
+	 * @return non-NULL if this mode is a prefix mode, NULL otherwise
+	 */
+	const PrefixMode* IsPrefixMode() const;
+
+	/**
 	 * Check whether this mode handler inherits from ListModeBase
 	 * @return non-NULL if this mode handler inherits from ListModeBase, NULL otherwise
 	 */
@@ -192,9 +198,21 @@ class CoreExport ModeHandler : public ServiceProvider
 
 	/**
 	 * Check whether this mode handler inherits from ListModeBase
+	 * @return non-NULL if this mode handler inherits from ListModeBase, NULL otherwise
+	 */
+	const ListModeBase* IsListModeBase() const;
+
+	/**
+	 * Check whether this mode handler inherits from ParamModeBase
 	 * @return non-NULL if this mode handler inherits from ParamModeBase, NULL otherwise
 	 */
 	ParamModeBase* IsParameterMode();
+
+	/**
+	 * Check whether this mode handler inherits from ParamModeBase
+	 * @return non-NULL if this mode handler inherits from ParamModeBase, NULL otherwise
+	 */
+	const ParamModeBase* IsParameterMode() const;
 
 	/**
 	 * Returns the mode's type
@@ -205,17 +223,16 @@ class CoreExport ModeHandler : public ServiceProvider
 	 */
 	inline bool NeedsOper() const { return oper; }
 	/**
-	 * Returns the number of parameters for the mode. Any non-zero
-	 * value should be considered to be equivalent to one.
-	 * @param adding If this is true, the number of parameters required to set the mode should be returned, otherwise the number of parameters required to unset the mode shall be returned.
-	 * @return The number of parameters the mode expects
+	 * Check if the mode needs a parameter for adding or removing
+	 * @param adding True to check if the mode needs a parameter when setting, false to check if the mode needs a parameter when unsetting
+	 * @return True if the mode needs a parameter for the specified action, false if it doesn't
 	 */
-	int GetNumParams(bool adding);
+	bool NeedsParam(bool adding) const;
 	/**
 	 * Returns the mode character this handler handles.
 	 * @return The mode character
 	 */
-	inline char GetModeChar() { return mode; }
+	char GetModeChar() const { return mode; }
 
 	/** Return the id of this mode which is used in User::modes and
 	 * Channel::modes as the index to determine whether a mode is set.
@@ -451,7 +468,7 @@ class CoreExport ModeWatcher : public classbase
 	 * Get the mode type being watched
 	 * @return The mode type being watched (user or channel)
 	 */
-	ModeType GetModeType();
+	ModeType GetModeType() const { return m_type; }
 
 	/**
 	 * Before the mode character is processed by its handler, this method will be called.
@@ -791,12 +808,27 @@ inline PrefixMode* ModeHandler::IsPrefixMode()
 	return (this->type_id == MC_PREFIX ? static_cast<PrefixMode*>(this) : NULL);
 }
 
+inline const PrefixMode* ModeHandler::IsPrefixMode() const
+{
+	return (this->type_id == MC_PREFIX ? static_cast<const PrefixMode*>(this) : NULL);
+}
+
 inline ListModeBase* ModeHandler::IsListModeBase()
 {
 	return (this->type_id == MC_LIST ? reinterpret_cast<ListModeBase*>(this) : NULL);
 }
 
+inline const ListModeBase* ModeHandler::IsListModeBase() const
+{
+	return (this->type_id == MC_LIST ? reinterpret_cast<const ListModeBase*>(this) : NULL);
+}
+
 inline ParamModeBase* ModeHandler::IsParameterMode()
 {
 	return (this->type_id == MC_PARAM ? reinterpret_cast<ParamModeBase*>(this) : NULL);
+}
+
+inline const ParamModeBase* ModeHandler::IsParameterMode() const
+{
+	return (this->type_id == MC_PARAM ? reinterpret_cast<const ParamModeBase*>(this) : NULL);
 }

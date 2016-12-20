@@ -1,7 +1,7 @@
 /*
  * InspIRCd -- Internet Relay Chat Daemon
  *
- *   Copyright (C) 2013 Adam <Adam@anope.org>
+ *   Copyright (C) 2013-2016 Adam <Adam@anope.org>
  *
  * This file is part of InspIRCd.  InspIRCd is free software: you can
  * redistribute it and/or modify it under the terms of the GNU General Public
@@ -65,25 +65,30 @@ class UserResolver : public DNS::Request
 			return;
 		}
 
-		const DNS::ResourceRecord& ans_record = r->answers[0];
+		const DNS::ResourceRecord* ans_record = r->FindAnswerOfType(this->question.type);
+		if (ans_record == NULL)
+		{
+			OnError(r);
+			return;
+		}
 
-		ServerInstance->Logs->Log(MODNAME, LOG_DEBUG, "DNS result for %s: '%s' -> '%s'", uuid.c_str(), ans_record.name.c_str(), ans_record.rdata.c_str());
+		ServerInstance->Logs->Log(MODNAME, LOG_DEBUG, "DNS result for %s: '%s' -> '%s'", uuid.c_str(), ans_record->name.c_str(), ans_record->rdata.c_str());
 
 		if (!fwd)
 		{
 			// first half of resolution is done. We now need to verify that the host matches.
-			ph->set(bound_user, ans_record.rdata);
+			ph->set(bound_user, ans_record->rdata);
 
 			UserResolver* res_forward;
 			if (bound_user->client_sa.sa.sa_family == AF_INET6)
 			{
 				/* IPV6 forward lookup */
-				res_forward = new UserResolver(this->manager, this->creator, bound_user, ans_record.rdata, DNS::QUERY_AAAA);
+				res_forward = new UserResolver(this->manager, this->creator, bound_user, ans_record->rdata, DNS::QUERY_AAAA);
 			}
 			else
 			{
 				/* IPV4 lookup */
-				res_forward = new UserResolver(this->manager, this->creator, bound_user, ans_record.rdata, DNS::QUERY_A);
+				res_forward = new UserResolver(this->manager, this->creator, bound_user, ans_record->rdata, DNS::QUERY_A);
 			}
 			try
 			{
@@ -107,7 +112,7 @@ class UserResolver : public DNS::Request
 			if (user_ip->sa.sa_family == AF_INET6)
 			{
 				struct in6_addr res_bin;
-				if (inet_pton(AF_INET6, ans_record.rdata.c_str(), &res_bin))
+				if (inet_pton(AF_INET6, ans_record->rdata.c_str(), &res_bin))
 				{
 					rev_match = !memcmp(&user_ip->in6.sin6_addr, &res_bin, sizeof(res_bin));
 				}
@@ -115,7 +120,7 @@ class UserResolver : public DNS::Request
 			else
 			{
 				struct in_addr res_bin;
-				if (inet_pton(AF_INET, ans_record.rdata.c_str(), &res_bin))
+				if (inet_pton(AF_INET, ans_record->rdata.c_str(), &res_bin))
 				{
 					rev_match = !memcmp(&user_ip->in4.sin_addr, &res_bin, sizeof(res_bin));
 				}

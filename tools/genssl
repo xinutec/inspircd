@@ -31,12 +31,12 @@ use warnings FATAL => qw(all);
 use File::Temp();
 
 # IMPORTANT: This script has to be able to run by itself so that it can be used
-#            by binary distributions where the make/utilities.pm module will not
+#            by binary distributions where the make/console.pm module will not
 #            be available!
 
 sub prompt($$) {
 	my ($question, $default) = @_;
-	return prompt_string(1, $question, $default) if eval 'use make::console; 1';
+	return prompt_string(1, $question, $default) if eval 'use FindBin;use lib $FindBin::RealDir;use make::console; 1';
 	say $question;
 	print "[$default] => ";
 	chomp(my $answer = <STDIN>);
@@ -45,7 +45,7 @@ sub prompt($$) {
 }
 
 if ($#ARGV != 0 || $ARGV[0] !~ /^(?:auto|gnutls|openssl)$/i) {
-	say 'Syntax: genssl <auto|gnutls|openssl>';
+	say STDERR "Usage: $0 <auto|gnutls|openssl>";
 	exit 1;
 }
 

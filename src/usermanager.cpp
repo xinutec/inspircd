@@ -62,34 +62,41 @@ UserManager::~UserManager()
 	}
 }
 
-/* add a client connection to the sockets list */
 void UserManager::AddUser(int socket, ListenSocket* via, irc::sockets::sockaddrs* client, irc::sockets::sockaddrs* server)
 {
-	/* NOTE: Calling this one parameter constructor for User automatically
-	 * allocates a new UUID and places it in the hash_map.
-	 */
+	// User constructor allocates a new UUID for the user and inserts it into the uuidlist
 	LocalUser* const New = new LocalUser(socket, client, server);
 	UserIOHandler* eh = &New->eh;
-
-	// If this listener has an IO hook provider set then tell it about the connection
-	if (via->iohookprov)
-		via->iohookprov->OnAccept(eh, client, server);
 
 	ServerInstance->Logs->Log("USERS", LOG_DEBUG, "New user fd: %d", socket);
 
 	this->unregistered_count++;
-
-	/* The users default nick is their UUID */
-	New->nick = New->uuid;
 	this->clientlist[New->nick] = New;
-
-	New->registered = REG_NONE;
-	New->signon = ServerInstance->Time();
-	New->lastping = 1;
-
 	this->AddClone(New);
-
 	this->local_users.push_front(New);
+
+	if (!SocketEngine::AddFd(eh, FD_WANT_FAST_READ | FD_WANT_EDGE_WRITE))
+	{
+		ServerInstance->Logs->Log("USERS", LOG_DEBUG, "Internal error on new connection");
+		this->QuitUser(New, "Internal error handling connection");
+		return;
+	}
+
+	// If this listener has an IO hook provider set then tell it about the connection
+	for (ListenSocket::IOHookProvList::iterator i = via->iohookprovs.begin(); i != via->iohookprovs.end(); ++i)
+	{
+		ListenSocket::IOHookProvRef& iohookprovref = *i;
+		if (!iohookprovref)
+			continue;
+
+		iohookprovref->OnAccept(eh, client, server);
+		// IOHook could have encountered a fatal error, e.g. if the TLS ClientHello was already in the queue and there was no common TLS version
+		if (!eh->getError().empty())
+		{
+			QuitUser(New, eh->getError());
+			return;
+		}
+	}
 
 	if (this->local_users.size() > ServerInstance->Config->SoftLimit)
 	{
@@ -98,16 +105,9 @@ void UserManager::AddUser(int socket, ListenSocket* via, irc::sockets::sockaddrs
 		return;
 	}
 
-	/*
-	 * First class check. We do this again in FullConnect after DNS is done, and NICK/USER is recieved.
-	 * See my note down there for why this is required. DO NOT REMOVE. :) -- w00t
-	 */
+	// First class check. We do this again in LocalUser::FullConnect() after DNS is done, and NICK/USER is received.
 	New->SetClass();
-
-	/*
-	 * Check connect class settings and initialise settings into User.
-	 * This will be done again after DNS resolution. -- w00t
-	 */
+	// If the user doesn't have an acceptable connect class CheckClass() quits them
 	New->CheckClass(ServerInstance->Config->CCOnConnect);
 	if (New->quitting)
 		return;
@@ -148,12 +148,6 @@ void UserManager::AddUser(int socket, ListenSocket* via, irc::sockets::sockaddrs
 				return;
 			}
 		}
-	}
-
-	if (!SocketEngine::AddFd(eh, FD_WANT_FAST_READ | FD_WANT_EDGE_WRITE))
-	{
-		ServerInstance->Logs->Log("USERS", LOG_DEBUG, "Internal error on new connection");
-		this->QuitUser(New, "Internal error handling connection");
 	}
 
 	if (ServerInstance->Config->RawLog)
@@ -292,14 +286,11 @@ bool UserManager::AllModulesReportReady(LocalUser* user)
 
 /**
  * This function is called once a second from the mainloop.
- * It is intended to do background checking on all the user structs, e.g.
- * stuff like ping checks, registration timeouts, etc.
+ * It is intended to do background checking on all the users, e.g. do
+ * ping checks, registration timeouts, etc.
  */
 void UserManager::DoBackgroundUserStuff()
 {
-	/*
-	 * loop over all local users..
-	 */
 	for (LocalList::iterator i = local_users.begin(); i != local_users.end(); )
 	{
 		// It's possible that we quit the user below due to ping timeout etc. and QuitUser() removes it from the list

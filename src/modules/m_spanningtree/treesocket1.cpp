@@ -37,7 +37,7 @@
  * and only do minor initialization tasks ourselves.
  */
 TreeSocket::TreeSocket(Link* link, Autoconnect* myac, const std::string& ipaddr)
-	: linkID(assign(link->Name)), LinkState(CONNECTING), MyRoot(NULL), proto_version(0)
+	: linkID(link->Name), LinkState(CONNECTING), MyRoot(NULL), proto_version(0)
 	, burstsent(false), age(ServerInstance->Time())
 {
 	capab = new CapabData;
@@ -60,8 +60,21 @@ TreeSocket::TreeSocket(int newfd, ListenSocket* via, irc::sockets::sockaddrs* cl
 	capab = new CapabData;
 	capab->capab_phase = 0;
 
-	if (via->iohookprov)
-		via->iohookprov->OnAccept(this, client, server);
+	for (ListenSocket::IOHookProvList::iterator i = via->iohookprovs.begin(); i != via->iohookprovs.end(); ++i)
+	{
+		ListenSocket::IOHookProvRef& iohookprovref = *i;
+		if (!iohookprovref)
+			continue;
+
+		iohookprovref->OnAccept(this, client, server);
+		// IOHook could have encountered a fatal error, e.g. if the TLS ClientHello was already in the queue and there was no common TLS version
+		if (!getError().empty())
+		{
+			TreeSocket::OnError(I_ERR_OTHER);
+			return;
+		}
+	}
+
 	SendCapabilities(1);
 
 	Utils->timeoutlist[this] = std::pair<std::string, int>(linkID, 30);

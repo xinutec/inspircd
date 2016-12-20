@@ -26,7 +26,7 @@ CommandDie::CommandDie(Module* parent)
 	: Command(parent, "DIE", 1)
 {
 	flags_needed = 'o';
-	syntax = "<password>";
+	syntax = "<server>";
 }
 
 static void QuitAll()
@@ -64,7 +64,7 @@ CmdResult CommandDie::Handle (const std::vector<std::string>& parameters, User *
 	{
 		{
 			std::string diebuf = "*** DIE command from " + user->GetFullHost() + ". Terminating.";
-			ServerInstance->Logs->Log("COMMAND", LOG_SPARSE, diebuf);
+			ServerInstance->Logs->Log(MODNAME, LOG_SPARSE, diebuf);
 			DieRestart::SendError(diebuf);
 		}
 
@@ -73,7 +73,7 @@ CmdResult CommandDie::Handle (const std::vector<std::string>& parameters, User *
 	}
 	else
 	{
-		ServerInstance->Logs->Log("COMMAND", LOG_SPARSE, "Failed /DIE command from %s", user->GetFullRealHost().c_str());
+		ServerInstance->Logs->Log(MODNAME, LOG_SPARSE, "Failed /DIE command from %s", user->GetFullRealHost().c_str());
 		ServerInstance->SNO->WriteGlobalSno('a', "Failed DIE Command from %s.", user->GetFullRealHost().c_str());
 		return CMD_FAILURE;
 	}

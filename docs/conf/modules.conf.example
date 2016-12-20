@@ -135,18 +135,6 @@
 #                    If a non-oper attempts to use the alias, it will #
 #                    appear to not exist.                             #
 #                                                                     #
-#<alias text="NICKSERV" replace="PRIVMSG NickServ :$2-" requires="NickServ" uline="yes">
-#<alias text="CHANSERV" replace="PRIVMSG ChanServ :$2-" requires="ChanServ" uline="yes">
-#<alias text="OPERSERV" replace="PRIVMSG OperServ :$2-" requires="OperServ" uline="yes" operonly="yes">
-#<alias text="BOTSERV" replace="PRIVMSG BotServ :$2-" requires="BotServ" uline="yes">
-#<alias text="HOSTSERV" replace="PRIVMSG HostServ :$2-" requires="HostServ" uline="yes">
-#<alias text="MEMOSERV" replace="PRIVMSG MemoServ :$2-" requires="MemoServ" uline="yes">
-#<alias text="NS" replace="PRIVMSG NickServ :$2-" requires="NickServ" uline="yes">
-#<alias text="CS" replace="PRIVMSG ChanServ :$2-" requires="ChanServ" uline="yes">
-#<alias text="OS" replace="PRIVMSG OperServ :$2-" requires="OperServ" uline="yes" operonly="yes">
-#<alias text="BS" replace="PRIVMSG BotServ :$2-" requires="BotServ" uline="yes">
-#<alias text="HS" replace="PRIVMSG HostServ :$2-" requires="HostServ" uline="yes">
-#<alias text="MS" replace="PRIVMSG MemoServ :$2-" requires="MemoServ" uline="yes">
 #
 # An example of using the format value to create an alias with two
 # different behaviours depending on the format of the parameters.
@@ -159,8 +147,7 @@
 #
 # This alias fixes a glitch in xchat 2.6.x and above and the way it
 # assumes IDENTIFY must be prefixed by a colon (:) character. It should
-# be placed ABOVE the default NICKSERV alias (the first example) listed
-# above.
+# be placed ABOVE the default NICKSERV alias.
 #
 #<alias text="NICKSERV" format=":IDENTIFY *" replace="PRIVMSG NickServ :IDENTIFY $3-"
 #  requires="NickServ" uline="yes">
@@ -653,7 +640,7 @@
 #
 #<title name="foo" password="bar" title="Official Chat Helper">
 #<title name="bar" password="foo" host="ident@test.org" title="Official Chat Helper" vhost="helper.test.org">
-#<title name="foo" password="fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9" hash="sha256" title="Official Chat Helper">
+#<title name="foo" password="$2a$10$UYZ4OcO8NNTCCGyCdY9SK.2GHiqGgxZfHFPOPmWuxEVWVQTtoDC7C" hash="bcrypt" title="Official Chat Helper">
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # DCCALLOW module: Adds the /DCCALLOW command.
@@ -1007,8 +994,11 @@
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Join flood module: Adds support for join flood protection +j X:Y.
-# Closes the channel for 60 seconds if X users join in Y seconds.
+# Closes the channel for N seconds if X users join in Y seconds.
 #<module name="joinflood">
+#
+# The number of seconds to close the channel for:
+#<joinflood duration="1m">
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Jump server module: Adds support for the RPL_REDIR numeric.
@@ -1169,21 +1159,6 @@
 #<monitor maxentries="30">
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# MsSQL module: Allows other SQL modules to access MS SQL Server
-# through a unified API.
-# This module is in extras. Re-run configure with:
-# ./configure --enable-extras=m_mssql.cpp
-# and run make install, then uncomment this module to enable it.
-#<module name="mssql">
-#
-#-#-#-#-#-#-#-#-#-#-#-#- SQL CONFIGURATION   -#-#-#-#-#-#-#-#-#-#-#-#-#
-#                                                                     #
-# mssql is more complex than described here, see the wiki for more    #
-# info http://wiki.inspircd.org/Modules/mssql                         #
-#
-#<database module="mssql" name="db" user="user" pass="pass" host="localhost" id="db1">
-
-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # MySQL module: Allows other SQL modules to access MySQL databases
 # through a unified API.
 # This module is in extras. Re-run configure with:
@@ -1230,6 +1205,9 @@
 # Nickchange flood protection module: Provides channel mode +F X:Y
 # which allows up to X nick changes in Y seconds.
 #<module name="nickflood">
+#
+# The number of seconds to prevent nick changes for:
+#<nickflood duration="1m">
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Nicklock module: Let opers change a user's nick and then stop that
@@ -1400,7 +1378,7 @@
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Password hash module: Allows hashed passwords to be used.
-# To be useful, a hashing module like sha256 also needs to be loaded.
+# To be useful, a hashing module like bcrypt also needs to be loaded.
 #<module name="password_hash">
 #
 #-#-#-#-#-#-#-#-#-# PASSWORD HASH CONFIGURATION #-#-#-#-#-#-#-#-#-#-#-#
@@ -1410,12 +1388,14 @@
 #
 #     <oper name="Brain"
 #           host="ident@dialup15.isp.test.com"
-#           hash="sha256"
-#           password="01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+#           hash="bcrypt"
+#           password="$2a$10$Mss9AtHHslZTLBrXqM0FB.JBwD.UTSu8A48SfrY9exrpxbsRiRTbO"
 #           type="NetAdmin">
 #
-# Starting from 2.0, you can use a more secure salted hash that prevents simply
-# looking up the hash's value in a rainbow table built for the hash.
+# If you are using a hash algorithm which does not perform salting you can use
+# HMAC to salt your passwords in order to prevent them from being looked up in
+# a rainbow table.
+#
 #    hash="hmac-sha256" password="lkS1Nbtp$CyLd/WPQXizsbxFUTqFRoMvaC+zhOULEeZaQkUJj+Gg"
 #
 # Generate hashes using the /MKPASSWD command on the server.
@@ -1771,6 +1751,11 @@
 #<module name="serverban">
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# SHA1 module: Allows other modules to generate SHA1 hashes.
+# Required by the WebSocket module.
+#<module name="sha1">
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Showfile: Provides support for showing a text file to users when    #
 # they enter a command.                                               #
 # This module adds one command for each <showfile> tag that shows the #
@@ -1873,6 +1858,10 @@
 #<module name="sslinfo">
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# mbedTLS SSL module: Adds support for SSL/TLS connections using mbedTLS.
+#<module name="ssl_mbedtls">
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # OpenSSL SSL module: Adds support for SSL connections using OpenSSL,
 # if enabled. You must answer 'yes' in ./configure when asked or symlink
 # the source for this module from the directory src/modules/extra, if
@@ -1945,7 +1934,7 @@
 #                                                                     #
 # See also: http://wiki.inspircd.org/Modules/sqloper                  #
 #                                                                     #
-#<sqloper dbid="1" hash="md5">
+#<sqloper dbid="1" hash="bcrypt">
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # StartTLS module: Implements STARTTLS, which allows clients          #
@@ -2020,7 +2009,7 @@
 # host       - Vhost to set.                                          #
 #
 #<vhost user="some_username" pass="some_password" host="some.host.test.cc">
-#<vhost user="foo" password="fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9" hash="sha256" host="some.other.host.example.com">
+#<vhost user="foo" password="$2a$10$iTuYLT6BRhRlOgzfsW9oPe62etW.oXwSpyKw5rJit64SGZanLXghO" hash="bcrypt" host="some.other.host.example.com">
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Watch module: Adds the WATCH command, which is used by clients to
@@ -2029,6 +2018,13 @@
 #
 # Set the maximum number of entries on a user's watch list below.
 #<watch maxentries="32">
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# WebSocket module: Adds HTML5 WebSocket support.
+# Specify hook="websocket" in a <bind> tag to make that port accept
+# WebSocket connections. Compatible with SSL/TLS.
+# Requires SHA-1 hash support available in the sha1 module.
+#<module name="websocket">
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # XLine database: Stores all *Lines (G/Z/K/R/any added by other modules)

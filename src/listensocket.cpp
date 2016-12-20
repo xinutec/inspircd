@@ -19,6 +19,7 @@
 
 
 #include "inspircd.h"
+#include "iohook.h"
 
 #ifndef _WIN32
 #include <netinet/tcp.h>
@@ -26,7 +27,6 @@
 
 ListenSocket::ListenSocket(ConfigTag* tag, const irc::sockets::sockaddrs& bind_to)
 	: bind_tag(tag)
-	, iohookprov(NULL, std::string())
 {
 	irc::sockets::satoap(bind_to, bind_addr, bind_port);
 	bind_desc = bind_to.str();
@@ -54,12 +54,27 @@ ListenSocket::ListenSocket(ConfigTag* tag, const irc::sockets::sockaddrs& bind_t
 	}
 #endif
 
+	if (tag->getBool("free"))
+	{
+		socklen_t enable = 1;
+#if defined IP_FREEBIND // Linux 2.4+
+		setsockopt(fd, SOL_IP, IP_FREEBIND, &enable, sizeof(enable));
+#elif defined IP_BINDANY // FreeBSD
+		setsockopt(fd, IPPROTO_IP, IP_BINDANY, &enable, sizeof(enable));
+#elif defined SO_BINDANY // NetBSD/OpenBSD
+		setsockopt(fd, SOL_SOCKET, SO_BINDANY, &enable, sizeof(enable));
+#else
+		(void)enable;
+#endif
+	}
+
 	SocketEngine::SetReuse(fd);
 	int rv = SocketEngine::Bind(this->fd, bind_to);
 	if (rv >= 0)
 		rv = SocketEngine::Listen(this->fd, ServerInstance->Config->MaxConn);
 
-	int timeout = tag->getInt("defer", 0);
+	// Default defer to on for TLS listeners because in TLS the client always speaks first
+	int timeout = tag->getInt("defer", (tag->getString("ssl").empty() ? 0 : 3));
 	if (timeout && !rv)
 	{
 #if defined TCP_DEFER_ACCEPT
@@ -178,15 +193,23 @@ void ListenSocket::OnEventHandlerRead()
 	}
 }
 
-bool ListenSocket::ResetIOHookProvider()
+void ListenSocket::ResetIOHookProvider()
 {
+	iohookprovs[0].SetProvider(bind_tag->getString("hook"));
+
+	// Check that all non-last hooks support being in the middle
+	for (IOHookProvList::iterator i = iohookprovs.begin(); i != iohookprovs.end()-1; ++i)
+	{
+		IOHookProvRef& curr = *i;
+		// Ignore if cannot be in the middle
+		if ((curr) && (!curr->IsMiddle()))
+			curr.SetProvider(std::string());
+	}
+
 	std::string provname = bind_tag->getString("ssl");
 	if (!provname.empty())
 		provname.insert(0, "ssl/");
 
-	// Set the new provider name, dynref handles the rest
-	iohookprov.SetProvider(provname);
-
-	// Return true if no provider was set, or one was set and it was also found
-	return (provname.empty() || iohookprov);
+	// SSL should be the last
+	iohookprovs.back().SetProvider(provname);
 }

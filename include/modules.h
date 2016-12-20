@@ -201,8 +201,6 @@ class CoreExport Version
 
 	/** Complex version information, including linking compatability data */
 	Version(const std::string &desc, int flags, const std::string& linkdata);
-
-	virtual ~Version() {}
 };
 
 class CoreExport DataProvider : public ServiceProvider
@@ -1006,10 +1004,6 @@ class CoreExport Module : public classbase, public usecountbase
  */
 typedef std::vector<Module*> IntModuleList;
 
-/** An event handler iterator
- */
-typedef IntModuleList::iterator EventHandlerIter;
-
 /** ModuleManager takes care of all things module-related
  * in the core.
  */
@@ -1042,6 +1036,12 @@ class CoreExport ModuleManager : public fakederef<ModuleManager>
 	 * @return True if all went well, false if a dependency loop was detected
 	 */
 	bool PrioritizeHooks();
+
+	/** Unregister all user modes or all channel modes owned by a module
+	 * @param mod Module whose modes to unregister
+	 * @param modetype MODETYPE_USER to unregister user modes, MODETYPE_CHANNEL to unregister channel modes
+	 */
+	void UnregisterModes(Module* mod, ModeType modetype);
 
  public:
 	typedef std::map<std::string, Module*> ModuleMap;
@@ -1277,7 +1277,7 @@ struct AllModuleList {
 		} \
 		return TRUE; \
 	} \
-	extern "C" DllExport const char inspircd_src_version[] = INSPIRCD_VERSION " " INSPIRCD_REVISION;
+	extern "C" DllExport const char inspircd_src_version[] = INSPIRCD_VERSION;
 
 #else
 
@@ -1286,7 +1286,7 @@ struct AllModuleList {
 	{ \
 		return new y; \
 	} \
-	extern "C" DllExport const char inspircd_src_version[] = INSPIRCD_VERSION " " INSPIRCD_REVISION;
+	extern "C" DllExport const char inspircd_src_version[] = INSPIRCD_VERSION;
 #endif
 
 #define COMMAND_INIT(c) MODULE_INIT(CommandModule<c>)

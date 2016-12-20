@@ -44,18 +44,18 @@ ModeHandler::~ModeHandler()
 {
 }
 
-int ModeHandler::GetNumParams(bool adding)
+bool ModeHandler::NeedsParam(bool adding) const
 {
 	switch (parameters_taken)
 	{
 		case PARAM_ALWAYS:
-			return 1;
+			return true;
 		case PARAM_SETONLY:
-			return adding ? 1 : 0;
+			return adding;
 		case PARAM_NONE:
 			break;
 	}
-	return 0;
+	return false;
 }
 
 std::string ModeHandler::GetUserParameter(User* user)
@@ -144,11 +144,6 @@ ModeWatcher::~ModeWatcher()
 	ServerInstance->Modes->DelModeWatcher(this);
 }
 
-ModeType ModeWatcher::GetModeType()
-{
-	return m_type;
-}
-
 bool ModeWatcher::BeforeMode(User*, User*, Channel*, std::string&, bool)
 {
 	return true;
@@ -219,7 +214,7 @@ ModeAction ModeParser::TryMode(User* user, User* targetuser, Channel* chan, Mode
 
 	ModeHandler* mh = mcitem.mh;
 	bool adding = mcitem.adding;
-	int pcnt = mh->GetNumParams(adding);
+	const bool needs_param = mh->NeedsParam(adding);
 
 	std::string& parameter = mcitem.param;
 	// crop mode parameter size to 250 characters
@@ -251,11 +246,12 @@ ModeAction ModeParser::TryMode(User* user, User* targetuser, Channel* chan, Mode
 			unsigned int ourrank = chan->GetPrefixValue(user);
 			if (ourrank < neededrank)
 			{
-				PrefixMode* neededmh = NULL;
-				for(char c='A'; c <= 'z'; c++)
+				const PrefixMode* neededmh = NULL;
+				const PrefixModeList& prefixmodes = GetPrefixModes();
+				for (PrefixModeList::const_iterator i = prefixmodes.begin(); i != prefixmodes.end(); ++i)
 				{
-					PrefixMode* privmh = FindPrefixMode(c);
-					if (privmh && privmh->GetPrefixRank() >= neededrank)
+					const PrefixMode* const privmh = *i;
+					if (privmh->GetPrefixRank() >= neededrank)
 					{
 						// this mode is sufficient to allow this action
 						if (!neededmh || privmh->GetPrefixRank() < neededmh->GetPrefixRank())
@@ -283,7 +279,7 @@ ModeAction ModeParser::TryMode(User* user, User* targetuser, Channel* chan, Mode
 				return MODEACTION_DENY;
 
 			// A module whacked the parameter completely, and there was one. Abort.
-			if (pcnt && parameter.empty())
+			if ((needs_param) && (parameter.empty()))
 				return MODEACTION_DENY;
 		}
 	}
@@ -299,7 +295,7 @@ ModeAction ModeParser::TryMode(User* user, User* targetuser, Channel* chan, Mode
 		}
 	}
 
-	if (adding && IS_LOCAL(user) && mh->NeedsOper() && !user->HasModePermission(modechar, type))
+	if ((adding) && (IS_LOCAL(user)) && (mh->NeedsOper()) && (!user->HasModePermission(mh)))
 	{
 		/* It's an oper only mode, and they don't have access to it. */
 		if (user->IsOper())
@@ -318,7 +314,7 @@ ModeAction ModeParser::TryMode(User* user, User* targetuser, Channel* chan, Mode
 	/* Call the handler for the mode */
 	ModeAction ma = mh->OnModeChange(user, targetuser, chan, parameter, adding);
 
-	if (pcnt && parameter.empty())
+	if ((needs_param) && (parameter.empty()))
 		return MODEACTION_DENY;
 
 	if (ma != MODEACTION_ALLOW)
@@ -363,7 +359,7 @@ void ModeParser::ModeParamsToChangeList(User* user, ModeType type, const std::ve
 		}
 
 		std::string parameter;
-		if (mh->GetNumParams(adding) && param_at < endindex)
+		if ((mh->NeedsParam(adding)) && (param_at < endindex))
 			parameter = parameters[param_at++];
 
 		changelist.push(mh, adding, parameter);
@@ -432,7 +428,7 @@ unsigned int ModeParser::ProcessSingle(User* user, Channel* targetchannel, User*
 
 		// If the mode is supposed to have a parameter then we first take a look at item.param
 		// and, if we were asked to, also handle mode merges now
-		if (mh->GetNumParams(item.adding))
+		if (mh->NeedsParam(item.adding))
 		{
 			// Skip the mode if the parameter does not pass basic validation
 			if (!IsModeParamValid(user, targetchannel, targetuser, item))
@@ -719,7 +715,7 @@ std::string ModeParser::CreateModeList(ModeType mt, bool needparam)
 	for (unsigned char mode = 'A'; mode <= 'z'; mode++)
 	{
 		ModeHandler* mh = modehandlers[mt][mode-65];
-		if ((mh) && ((!needparam) || (mh->GetNumParams(true))))
+		if ((mh) && ((!needparam) || (mh->NeedsParam(true))))
 			modestr.push_back(mode);
 	}
 
@@ -756,7 +752,7 @@ std::string ModeParser::GiveModeList(ModeType mt)
 		 /* One parameter when adding */
 		if (mh)
 		{
-			if (mh->GetNumParams(true))
+			if (mh->NeedsParam(true))
 			{
 				PrefixMode* pm = mh->IsPrefixMode();
 				if ((mh->IsListMode()) && ((!pm) || (pm->GetPrefix() == 0)))
@@ -766,7 +762,7 @@ std::string ModeParser::GiveModeList(ModeType mt)
 				else
 				{
 					/* ... and one parameter when removing */
-					if (mh->GetNumParams(false))
+					if (mh->NeedsParam(false))
 					{
 						/* But not a list mode */
 						if (!pm)
@@ -791,24 +787,33 @@ std::string ModeParser::GiveModeList(ModeType mt)
 	return type1 + "," + type2 + "," + type3 + "," + type4;
 }
 
+struct PrefixModeSorter
+{
+	bool operator()(PrefixMode* lhs, PrefixMode* rhs)
+	{
+		return lhs->GetPrefixRank() < rhs->GetPrefixRank();
+	}
+};
+
 std::string ModeParser::BuildPrefixes(bool lettersAndModes)
 {
 	std::string mletters;
 	std::string mprefixes;
-	insp::flat_map<int, std::pair<char, char> > prefixes;
+	std::vector<PrefixMode*> prefixes;
 
 	const PrefixModeList& list = GetPrefixModes();
 	for (PrefixModeList::const_iterator i = list.begin(); i != list.end(); ++i)
 	{
 		PrefixMode* pm = *i;
 		if (pm->GetPrefix())
-			prefixes[pm->GetPrefixRank()] = std::make_pair(pm->GetPrefix(), pm->GetModeChar());
+			prefixes.push_back(pm);
 	}
 
-	for (insp::flat_map<int, std::pair<char, char> >::reverse_iterator n = prefixes.rbegin(); n != prefixes.rend(); ++n)
+	std::sort(prefixes.begin(), prefixes.end(), PrefixModeSorter());
+	for (std::vector<PrefixMode*>::const_reverse_iterator n = prefixes.rbegin(); n != prefixes.rend(); ++n)
 	{
-		mletters = mletters + n->second.first;
-		mprefixes = mprefixes + n->second.second;
+		mletters += (*n)->GetPrefix();
+		mprefixes += (*n)->GetModeChar();
 	}
 
 	return lettersAndModes ? "(" + mprefixes + ")" + mletters : mletters;
@@ -849,7 +854,7 @@ void ModeHandler::RemoveMode(Channel* channel, Modes::ChangeList& changelist)
 {
 	if (channel->IsModeSet(this))
 	{
-		if (this->GetNumParams(false))
+		if (this->NeedsParam(false))
 			// Removing this mode requires a parameter
 			changelist.push_remove(this, channel->GetModeParameter(this));
 		else
@@ -862,7 +867,7 @@ void PrefixMode::RemoveMode(Channel* chan, Modes::ChangeList& changelist)
 	const Channel::MemberMap& userlist = chan->GetUsers();
 	for (Channel::MemberMap::const_iterator i = userlist.begin(); i != userlist.end(); ++i)
 	{
-		if (i->second->hasMode(this->GetModeChar()))
+		if (i->second->HasMode(this))
 			changelist.push_remove(this, i->first->nick);
 	}
 }

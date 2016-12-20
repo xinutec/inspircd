@@ -21,6 +21,13 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/// $CompilerFlags: find_compiler_flags("openssl")
+/// $LinkerFlags: find_linker_flags("openssl" "-lssl -lcrypto")
+
+/// $PackageInfo: require_system("centos") openssl-devel pkgconfig
+/// $PackageInfo: require_system("darwin") openssl pkg-config
+/// $PackageInfo: require_system("ubuntu" "16.04") libssl-dev openssl pkg-config
+
 
 #include "inspircd.h"
 #include "iohook.h"
@@ -46,12 +53,18 @@
 # pragma comment(lib, "libeay32.lib")
 #endif
 
-/* $CompileFlags: pkgconfversion("openssl","0.9.7") pkgconfincludes("openssl","/openssl/ssl.h","") */
-/* $LinkerFlags: rpath("pkg-config --libs openssl") pkgconflibs("openssl","/libssl.so","-lssl -lcrypto") */
-
 #if ((OPENSSL_VERSION_NUMBER >= 0x10000000L) && (!(defined(OPENSSL_NO_ECDH))))
 // OpenSSL 0.9.8 includes some ECC support, but it's unfinished. Enable only for 1.0.0 and later.
 #define INSPIRCD_OPENSSL_ENABLE_ECDH
+#endif
+
+// BIO is opaque in OpenSSL 1.1 but the access API does not exist in 1.0 and older.
+#if ((defined LIBRESSL_VERSION_NUMBER) || (OPENSSL_VERSION_NUMBER < 0x10100000L))
+# define BIO_get_data(BIO) BIO->ptr
+# define BIO_set_data(BIO, VALUE) BIO->ptr = VALUE;
+# define BIO_set_init(BIO, VALUE) BIO->init = VALUE;
+#else
+# define INSPIRCD_OPENSSL_OPAQUE_BIO
 #endif
 
 enum issl_status { ISSL_NONE, ISSL_HANDSHAKING, ISSL_OPEN };
@@ -132,7 +145,7 @@ namespace OpenSSL
 			mode |= SSL_MODE_RELEASE_BUFFERS;
 #endif
 			SSL_CTX_set_mode(ctx, mode);
-			SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE, OnVerify);
+			SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
 			SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
 			SSL_CTX_set_info_callback(ctx, StaticSSLInfoCallback);
 		}
@@ -204,6 +217,11 @@ namespace OpenSSL
 			// Set the default options and what is in the conf
 			SSL_CTX_set_options(ctx, ctx_options | setoptions);
 			return SSL_CTX_clear_options(ctx, clearoptions);
+		}
+
+		void SetVerifyCert()
+		{
+			SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE, OnVerify);
 		}
 
 		SSL* CreateServerSession()
@@ -345,6 +363,10 @@ namespace OpenSSL
 				ERR_print_errors_cb(error_callback, this);
 				ServerInstance->Logs->Log(MODNAME, LOG_DEFAULT, "Can't read CA list from %s. This is only a problem if you want to verify client certificates, otherwise it's safe to ignore this message. Error: %s", filename.c_str(), lasterr.c_str());
 			}
+
+			clictx.SetVerifyCert();
+			if (tag->getBool("requestclientcert", true))
+				ctx.SetVerifyCert();
 		}
 
 		const std::string& GetName() const { return name; }
@@ -359,7 +381,7 @@ namespace OpenSSL
 	{
 		static int create(BIO* bio)
 		{
-			bio->init = 1;
+			BIO_set_init(bio, 1);
 			return 1;
 		}
 
@@ -380,9 +402,25 @@ namespace OpenSSL
 
 		static int read(BIO* bio, char* buf, int len);
 		static int write(BIO* bio, const char* buf, int len);
+
+#ifdef INSPIRCD_OPENSSL_OPAQUE_BIO
+		static BIO_METHOD* alloc()
+		{
+			BIO_METHOD* meth = BIO_meth_new(100 | BIO_TYPE_SOURCE_SINK, "inspircd");
+			BIO_meth_set_write(meth, OpenSSL::BIOMethod::write);
+			BIO_meth_set_read(meth, OpenSSL::BIOMethod::read);
+			BIO_meth_set_ctrl(meth, OpenSSL::BIOMethod::ctrl);
+			BIO_meth_set_create(meth, OpenSSL::BIOMethod::create);
+			BIO_meth_set_destroy(meth, OpenSSL::BIOMethod::destroy);
+			return meth;
+		}
+#endif
 	}
 }
 
+// BIO_METHOD is opaque in OpenSSL 1.1 so we can't do this.
+// See OpenSSL::BIOMethod::alloc for the new method.
+#ifndef INSPIRCD_OPENSSL_OPAQUE_BIO
 static BIO_METHOD biomethods =
 {
 	(100 | BIO_TYPE_SOURCE_SINK),
@@ -396,6 +434,9 @@ static BIO_METHOD biomethods =
 	OpenSSL::BIOMethod::destroy, // destroy, does nothing, see function body for more info
 	NULL // callback_ctrl
 };
+#else
+static BIO_METHOD* biomethods;
+#endif
 
 static int OnVerify(int preverify_ok, X509_STORE_CTX *ctx)
 {
@@ -545,7 +586,7 @@ class OpenSSLIOHook : public SSLIOHook
 			// to ISSL_NONE so CheckRenego() closes the session
 			status = ISSL_NONE;
 			BIO* bio = SSL_get_rbio(sess);
-			EventHandler* eh = static_cast<StreamSocket*>(bio->ptr);
+			EventHandler* eh = static_cast<StreamSocket*>(BIO_get_data(bio));
 			SocketEngine::Shutdown(eh, 2);
 		}
 	}
@@ -588,8 +629,12 @@ class OpenSSLIOHook : public SSLIOHook
 		, profile(sslprofile)
 	{
 		// Create BIO instance and store a pointer to the socket in it which will be used by the read and write functions
+#ifdef INSPIRCD_OPENSSL_OPAQUE_BIO
+		BIO* bio = BIO_new(biomethods);
+#else
 		BIO* bio = BIO_new(&biomethods);
-		bio->ptr = sock;
+#endif
+		BIO_set_data(bio, sock);
 		SSL_set_bio(sess, bio, bio);
 
 		SSL_set_ex_data(sess, exdataindex, this);
@@ -622,8 +667,14 @@ class OpenSSLIOHook : public SSLIOHook
 			if (ret > 0)
 			{
 				recvq.append(buffer, ret);
+				int mask = 0;
+				// Schedule a read if there is still data in the OpenSSL buffer
+				if (SSL_pending(sess) > 0)
+					mask |= FD_ADD_TRIAL_READ;
 				if (data_to_write)
-					SocketEngine::ChangeEventMask(user, FD_WANT_POLL_READ | FD_WANT_SINGLE_WRITE);
+					mask |= FD_WANT_POLL_READ | FD_WANT_SINGLE_WRITE;
+				if (mask != 0)
+					SocketEngine::ChangeEventMask(user, mask);
 				return 1;
 			}
 			else if (ret == 0)
@@ -656,7 +707,7 @@ class OpenSSLIOHook : public SSLIOHook
 		}
 	}
 
-	int OnStreamSocketWrite(StreamSocket* user) CXX11_OVERRIDE
+	int OnStreamSocketWrite(StreamSocket* user, StreamSocket::SendQueue& sendq) CXX11_OVERRIDE
 	{
 		// Finish handshake if needed
 		int prepret = PrepareIO(user);
@@ -666,7 +717,6 @@ class OpenSSLIOHook : public SSLIOHook
 		data_to_write = true;
 
 		// Session is ready for transferring application data
-		StreamSocket::SendQueue& sendq = user->GetSendQ();
 		while (!sendq.empty())
 		{
 			ERR_clear_error();
@@ -741,7 +791,7 @@ static int OpenSSL::BIOMethod::write(BIO* bio, const char* buffer, int size)
 {
 	BIO_clear_retry_flags(bio);
 
-	StreamSocket* sock = static_cast<StreamSocket*>(bio->ptr);
+	StreamSocket* sock = static_cast<StreamSocket*>(BIO_get_data(bio));
 	if (sock->GetEventMask() & FD_WRITE_WILL_BLOCK)
 	{
 		// Writes blocked earlier, don't retry syscall
@@ -764,7 +814,7 @@ static int OpenSSL::BIOMethod::read(BIO* bio, char* buffer, int size)
 {
 	BIO_clear_retry_flags(bio);
 
-	StreamSocket* sock = static_cast<StreamSocket*>(bio->ptr);
+	StreamSocket* sock = static_cast<StreamSocket*>(BIO_get_data(bio));
 	if (sock->GetEventMask() & FD_READ_WILL_BLOCK)
 	{
 		// Reads blocked earlier, don't retry syscall
@@ -874,6 +924,14 @@ class ModuleSSLOpenSSL : public Module
 		// Initialize OpenSSL
 		SSL_library_init();
 		SSL_load_error_strings();
+#ifdef INSPIRCD_OPENSSL_OPAQUE_BIO
+		biomethods = OpenSSL::BIOMethod::alloc();
+	}
+
+	~ModuleSSLOpenSSL()
+	{
+		BIO_meth_free(biomethods);
+#endif
 	}
 
 	void init() CXX11_OVERRIDE
@@ -910,7 +968,7 @@ class ModuleSSLOpenSSL : public Module
 		{
 			LocalUser* user = IS_LOCAL((User*)item);
 
-			if (user && user->eh.GetIOHook() && user->eh.GetIOHook()->prov->creator == this)
+			if ((user) && (user->eh.GetModHook(this)))
 			{
 				// User is using SSL, they're a local user, and they're using one of *our* SSL ports.
 				// Potentially there could be multiple SSL modules loaded at once on different ports.
@@ -921,13 +979,9 @@ class ModuleSSLOpenSSL : public Module
 
 	ModResult OnCheckReady(LocalUser* user) CXX11_OVERRIDE
 	{
-		if ((user->eh.GetIOHook()) && (user->eh.GetIOHook()->prov->creator == this))
-		{
-			OpenSSLIOHook* iohook = static_cast<OpenSSLIOHook*>(user->eh.GetIOHook());
-			if (!iohook->IsHandshakeDone())
-				return MOD_RES_DENY;
-		}
-
+		const OpenSSLIOHook* const iohook = static_cast<OpenSSLIOHook*>(user->eh.GetModHook(this));
+		if ((iohook) && (!iohook->IsHandshakeDone()))
+			return MOD_RES_DENY;
 		return MOD_RES_PASSTHRU;
 	}
 

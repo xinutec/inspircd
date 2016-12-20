@@ -73,7 +73,7 @@ class ModuleDeaf : public Module
 		 * If we have no bypasschars_uline in config, and this is a bypasschar (regular)
 		 * Than it is obviously going to get through +d, no build required
 		 */
-		if (!deaf_bypasschars_uline.empty() && is_bypasschar)
+		if (deaf_bypasschars_uline.empty() && is_bypasschar)
 			return MOD_RES_PASSTHRU;
 
 		const Channel::MemberMap& ulist = chan->GetUsers();
@@ -93,9 +93,6 @@ class ModuleDeaf : public Module
 			/* matched a regular bypass */
 			if (is_bypasschar && !is_a_uline)
 				continue; /* deliver message */
-
-			if (status && !strchr(i->second->GetAllPrefixChars(), status))
-				continue;
 
 			/* don't deliver message! */
 			exempt_list.insert(i->first);

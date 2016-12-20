@@ -37,12 +37,15 @@ use warnings FATAL => qw(all);
 use File::Basename        qw(basename);
 use File::Copy            ();
 use File::Spec::Functions qw(rel2abs);
+use FindBin               qw($RealDir);
 use Getopt::Long          qw(GetOptions);
 use POSIX                 qw(getgid getuid);
 
+use lib $RealDir;
 use make::common;
 use make::configure;
 use make::console;
+use make::directive;
 
 my ($opt_binary_dir,
     $opt_config_dir,
@@ -123,8 +126,8 @@ our $interactive = !(
 	defined $opt_uid
 );
 
-my %version = get_version();
-print_format "<|BOLD Configuring InspIRCd $version{MAJOR}.$version{MINOR}.$version{PATCH}+$version{LABEL} on $^O.|>\n";
+my %version = get_version $opt_distribution_label;
+print_format "<|BOLD Configuring InspIRCd $version{FULL} on $^O.|>\n";
 
 our %config;
 if ($interactive) {
@@ -183,12 +186,6 @@ if (defined $opt_socketengine) {
 		print "\n";	
 		exit 1;
 	}
-}
-
-# If the user has specified a distribution label then we use it in
-# place of the label from src/version.sh or Git.
-if (defined $opt_distribution_label) {
-	$version{LABEL} = $opt_distribution_label;
 }
 
 if (defined $opt_system) {
@@ -298,6 +295,7 @@ if (prompt_bool $interactive, $question, 0) {
 	# TODO: finish modulemanager rewrite and replace this code with:
 	# system './modulemanager', 'enable', '--auto';
 	enable_extras 'm_ssl_gnutls.cpp' unless system 'pkg-config --exists gnutls >/dev/null 2>&1';
+	enable_extras 'm_ssl_mbedtls.cpp' if -e '/usr/include/mbedtls/ssl.h';
 	enable_extras 'm_ssl_openssl.cpp' unless system 'pkg-config --exists openssl >/dev/null 2>&1';
 }
 
@@ -305,6 +303,9 @@ if (prompt_bool $interactive, $question, 0) {
 if (<src/modules/m_ssl_*.cpp> && prompt_bool $interactive, 'Would you like to generate SSL certificates now?', $interactive) {
 	system './tools/genssl', 'auto';
 }
+
+# Cache the distribution label so that its not lost when --update is run.
+$config{DISTRIBUTION} = $opt_distribution_label if $opt_distribution_label;
 
 write_configure_cache %config;
 parse_templates \%config, \%compiler, \%version;
@@ -408,7 +409,7 @@ EXTRA:	for my $extra (@extras) {
 	for my $extra (keys(%extras)) {
 		next unless $extras{$extra} =~ m/enabled/; # only process enabled extras.
 		my $abs_extra = File::Spec->catfile($abs_srcdir, "extra", $extra);
-		my @deps = split /\s+/, get_property($abs_extra, 'ModDep');
+		my @deps = split /\s+/, get_directive($abs_extra, 'ModDep', '');
 		for my $dep (@deps) {
 			if (exists($extras{$dep})) {
 				my $ref = \$extras{$dep}; # Take reference.
@@ -455,7 +456,7 @@ sub enable_extras (@) {
 			next;
 		}
 		# Get dependencies, and add them to be processed.
-		my @deps = split /\s+/, get_property($extrapath, 'ModDep');
+		my @deps = split /\s+/, get_directive($extrapath, 'ModDep', '');
 		for my $dep (@deps) {
 			next if scalar(grep { $_ eq $dep } (@extras)) > 0; # Skip if we're going to be enabling it anyway.
 			if (!-e "src/modules/$dep" && !-e "include/$dep") {
@@ -491,7 +492,7 @@ EXTRA:	for my $extra (@extras) {
 		}
 		# Check if anything needs this.
 		for my $file (@files) {
-			my @deps = split /\s+/, get_property("src/modules/extra/$file", 'ModDep');
+			my @deps = split /\s+/, get_directive("src/modules/extra/$file", 'ModDep', '');
 			# File depends on this extra...
 			if (scalar(grep { $_ eq $extra } @deps) > 0) {
 				# And is both enabled and not about to be disabled.

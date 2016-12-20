@@ -121,6 +121,9 @@ class ServerLimits
 	 * @param tag Configuration tag to read the limits from
 	 */
 	ServerLimits(ConfigTag* tag);
+
+	/** Maximum length of a n!u@h mask */
+	size_t GetMaxMask() const { return NickMax + 1 + IdentMax + 1 + MaxHost; }
 };
 
 struct CommandLineConf
@@ -400,6 +403,10 @@ class CoreExport ServerConfig
 	 */
 	std::string HideKillsServer;
 
+	/** Set to hide kills from clients of ulined servers in snotices.
+	 */
+	bool HideULineKills;
+
 	/** The full pathname and filename of the PID
 	 * file as defined in the configuration.
 	 */
@@ -444,11 +451,11 @@ class CoreExport ServerConfig
 	 */
 	OperIndex OperTypes;
 
-	/** Default value for <connect:maxchans>, deprecated in 2.2
+	/** Default value for <connect:maxchans>, deprecated in 3.0
 	 */
 	unsigned int MaxChans;
 
-	/** Default value for <oper:maxchans>, deprecated in 2.2
+	/** Default value for <oper:maxchans>, deprecated in 3.0
 	 */
 	unsigned int OperMaxChans;
 

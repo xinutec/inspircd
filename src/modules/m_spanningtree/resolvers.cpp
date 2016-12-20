@@ -42,16 +42,21 @@ ServernameResolver::ServernameResolver(DNS::Manager* mgr, const std::string& hos
 
 void ServernameResolver::OnLookupComplete(const DNS::Query *r)
 {
-	const DNS::ResourceRecord &ans_record = r->answers[0];
+	const DNS::ResourceRecord* const ans_record = r->FindAnswerOfType(this->question.type);
+	if (!ans_record)
+	{
+		OnError(r);
+		return;
+	}
 
 	/* Initiate the connection, now that we have an IP to use.
 	 * Passing a hostname directly to BufferedSocket causes it to
 	 * just bail and set its FD to -1.
 	 */
-	TreeServer* CheckDupe = Utils->FindServer(MyLink->Name.c_str());
+	TreeServer* CheckDupe = Utils->FindServer(MyLink->Name);
 	if (!CheckDupe) /* Check that nobody tried to connect it successfully while we were resolving */
 	{
-		TreeSocket* newsocket = new TreeSocket(MyLink, myautoconnect, ans_record.rdata);
+		TreeSocket* newsocket = new TreeSocket(MyLink, myautoconnect, ans_record->rdata);
 		if (newsocket->GetFd() > -1)
 		{
 			/* We're all OK */
@@ -68,7 +73,12 @@ void ServernameResolver::OnLookupComplete(const DNS::Query *r)
 
 void ServernameResolver::OnError(const DNS::Query *r)
 {
-	/* Ooops! */
+	if (r->error == DNS::ERROR_UNLOADED)
+	{
+		// We're being unloaded, skip the snotice and ConnectServer() below to prevent autoconnect creating new sockets
+		return;
+	}
+
 	if (query == DNS::QUERY_AAAA)
 	{
 		ServernameResolver* snr = new ServernameResolver(this->manager, host, MyLink, DNS::QUERY_A, myautoconnect);
@@ -95,14 +105,17 @@ SecurityIPResolver::SecurityIPResolver(Module* me, DNS::Manager* mgr, const std:
 
 void SecurityIPResolver::OnLookupComplete(const DNS::Query *r)
 {
-	const DNS::ResourceRecord &ans_record = r->answers[0];
-
 	for (std::vector<reference<Link> >::iterator i = Utils->LinkBlocks.begin(); i != Utils->LinkBlocks.end(); ++i)
 	{
 		Link* L = *i;
 		if (L->IPAddr == host)
 		{
-			Utils->ValidIPs.push_back(ans_record.rdata);
+			for (std::vector<DNS::ResourceRecord>::const_iterator j = r->answers.begin(); j != r->answers.end(); ++j)
+			{
+				const DNS::ResourceRecord& ans_record = *j;
+				if (ans_record.type == this->question.type)
+					Utils->ValidIPs.push_back(ans_record.rdata);
+			}
 			break;
 		}
 	}
@@ -110,6 +123,7 @@ void SecurityIPResolver::OnLookupComplete(const DNS::Query *r)
 
 void SecurityIPResolver::OnError(const DNS::Query *r)
 {
+	// This can be called because of us being unloaded but we don't have to do anything differently
 	if (query == DNS::QUERY_AAAA)
 	{
 		SecurityIPResolver* res = new SecurityIPResolver(mine, this->manager, host, MyLink, DNS::QUERY_A);

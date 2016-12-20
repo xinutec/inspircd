@@ -338,6 +338,7 @@ class MyManager : public Manager, public Timer, public EventHandler
 	cache_map cache;
 
 	irc::sockets::sockaddrs myserver;
+	bool unloading;
 
 	/** Maximum number of entries in cache
 	 */
@@ -402,6 +403,7 @@ class MyManager : public Manager, public Timer, public EventHandler
 	DNS::Request* requests[MAX_REQUEST_ID+1];
 
 	MyManager(Module* c) : Manager(c), Timer(5*60, true)
+		, unloading(false)
 	{
 		for (unsigned int i = 0; i <= MAX_REQUEST_ID; ++i)
 			requests[i] = NULL;
@@ -410,13 +412,16 @@ class MyManager : public Manager, public Timer, public EventHandler
 
 	~MyManager()
 	{
+		// Ensure Process() will fail for new requests
+		unloading = true;
+
 		for (unsigned int i = 0; i <= MAX_REQUEST_ID; ++i)
 		{
 			DNS::Request* request = requests[i];
 			if (!request)
 				continue;
 
-			Query rr(*request);
+			Query rr(request->question);
 			rr.error = ERROR_UNKNOWN;
 			request->OnError(&rr);
 
@@ -426,7 +431,10 @@ class MyManager : public Manager, public Timer, public EventHandler
 
 	void Process(DNS::Request* req)
 	{
-		ServerInstance->Logs->Log(MODNAME, LOG_DEBUG, "Processing request to lookup " + req->name + " of type " + ConvToStr(req->type) + " to " + this->myserver.addr());
+		if ((unloading) || (req->creator->dying))
+			throw Exception("Module is being unloaded");
+
+		ServerInstance->Logs->Log(MODNAME, LOG_DEBUG, "Processing request to lookup " + req->question.name + " of type " + ConvToStr(req->question.type) + " to " + this->myserver.addr());
 
 		/* Create an id */
 		unsigned int tries = 0;
@@ -463,7 +471,7 @@ class MyManager : public Manager, public Timer, public EventHandler
 		Packet p;
 		p.flags = QUERYFLAGS_RD;
 		p.id = req->id;
-		p.question = *req;
+		p.question = req->question;
 
 		unsigned char buffer[524];
 		unsigned short len = p.Pack(buffer, sizeof(buffer));
@@ -479,7 +487,7 @@ class MyManager : public Manager, public Timer, public EventHandler
 		}
 
 		// Update name in the original request so question checking works for PTR queries
-		req->name = p.question.name;
+		req->question.name = p.question.name;
 
 		if (SocketEngine::SendTo(this, buffer, len, 0, &this->myserver.sa, this->myserver.sa_size()) != len)
 			throw Exception("DNS: Unable to send query");
@@ -568,7 +576,7 @@ class MyManager : public Manager, public Timer, public EventHandler
 			return;
 		}
 
-		if (static_cast<Question&>(*request) != recv_packet.question)
+		if (request->question != recv_packet.question)
 		{
 			// This can happen under high latency, drop it silently, do not fail the request
 			ServerInstance->Logs->Log(MODNAME, LOG_DEBUG, "Received an answer that isn't for a question we asked");
@@ -631,7 +639,7 @@ class MyManager : public Manager, public Timer, public EventHandler
 		}
 		else
 		{
-			ServerInstance->Logs->Log(MODNAME, LOG_DEBUG, "Lookup complete for " + request->name);
+			ServerInstance->Logs->Log(MODNAME, LOG_DEBUG, "Lookup complete for " + request->question.name);
 			ServerInstance->stats.DnsGood++;
 			request->OnLookupComplete(&recv_packet);
 			this->AddCache(recv_packet);
@@ -727,7 +735,7 @@ class ModuleDNS : public Module
 	{
 #ifdef _WIN32
 		// attempt to look up their nameserver from the system
-		ServerInstance->Logs->Log("CONFIG", LOG_DEFAULT, "WARNING: <dns:server> not defined, attempting to find a working server in the system settings...");
+		ServerInstance->Logs->Log(MODNAME, LOG_DEFAULT, "WARNING: <dns:server> not defined, attempting to find a working server in the system settings...");
 
 		PFIXED_INFO pFixedInfo;
 		DWORD dwBufferSize = sizeof(FIXED_INFO);
@@ -751,15 +759,15 @@ class ModuleDNS : public Module
 
 			if (!DNSServer.empty())
 			{
-				ServerInstance->Logs->Log("CONFIG", LOG_DEFAULT, "<dns:server> set to '%s' as first active resolver in the system settings.", DNSServer.c_str());
+				ServerInstance->Logs->Log(MODNAME, LOG_DEFAULT, "<dns:server> set to '%s' as first active resolver in the system settings.", DNSServer.c_str());
 				return;
 			}
 		}
 
-		ServerInstance->Logs->Log("CONFIG", LOG_DEFAULT, "No viable nameserver found! Defaulting to nameserver '127.0.0.1'!");
+		ServerInstance->Logs->Log(MODNAME, LOG_DEFAULT, "No viable nameserver found! Defaulting to nameserver '127.0.0.1'!");
 #else
 		// attempt to look up their nameserver from /etc/resolv.conf
-		ServerInstance->Logs->Log("CONFIG", LOG_DEFAULT, "WARNING: <dns:server> not defined, attempting to find working server in /etc/resolv.conf...");
+		ServerInstance->Logs->Log(MODNAME, LOG_DEFAULT, "WARNING: <dns:server> not defined, attempting to find working server in /etc/resolv.conf...");
 
 		std::ifstream resolv("/etc/resolv.conf");
 
@@ -770,13 +778,13 @@ class ModuleDNS : public Module
 				resolv >> DNSServer;
 				if (DNSServer.find_first_not_of("0123456789.") == std::string::npos || DNSServer.find_first_not_of("0123456789ABCDEFabcdef:") == std::string::npos)
 				{
-					ServerInstance->Logs->Log("CONFIG", LOG_DEFAULT, "<dns:server> set to '%s' as first resolver in /etc/resolv.conf.",DNSServer.c_str());
+					ServerInstance->Logs->Log(MODNAME, LOG_DEFAULT, "<dns:server> set to '%s' as first resolver in /etc/resolv.conf.",DNSServer.c_str());
 					return;
 				}
 			}
 		}
 
-		ServerInstance->Logs->Log("CONFIG", LOG_DEFAULT, "/etc/resolv.conf contains no viable nameserver entries! Defaulting to nameserver '127.0.0.1'!");
+		ServerInstance->Logs->Log(MODNAME, LOG_DEFAULT, "/etc/resolv.conf contains no viable nameserver entries! Defaulting to nameserver '127.0.0.1'!");
 #endif
 		DNSServer = "127.0.0.1";
 	}
@@ -815,7 +823,7 @@ class ModuleDNS : public Module
 
 			if (req->creator == mod)
 			{
-				Query rr(*req);
+				Query rr(req->question);
 				rr.error = ERROR_UNLOADED;
 				req->OnError(&rr);
 

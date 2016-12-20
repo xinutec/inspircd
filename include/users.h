@@ -135,6 +135,11 @@ struct CoreExport ConnectClass : public refcountbase
 	 */
 	bool resolvehostnames;
 
+	/**
+	 * If non-empty the server ports which this user has to be using
+	 */
+	insp::flat_set<int> ports;
+
 	/** Create a new connect class with no settings.
 	 */
 	ConnectClass(ConfigTag* tag, char type, const std::string& mask);
@@ -455,11 +460,10 @@ class CoreExport User : public Extensible
 	/** Returns true or false if a user can set a privileged user or channel mode.
 	 * This is done by looking up their oper type from User::oper, then referencing
 	 * this to their oper classes, and checking the modes they can set.
-	 * @param mode The mode the check
-	 * @param type ModeType (MODETYPE_CHANNEL or MODETYPE_USER).
+	 * @param mh Mode to check
 	 * @return True if the user can set or unset this mode.
 	 */
-	virtual bool HasModePermission(unsigned char mode, ModeType type);
+	virtual bool HasModePermission(const ModeHandler* mh) const;
 
 	/** Creates a usermask with real host.
 	 * Takes a buffer to use and fills the given buffer with the hostmask in the format user\@host
@@ -864,11 +868,10 @@ class CoreExport LocalUser : public User, public insp::intrusive_list_node<Local
 	/** Returns true or false if a user can set a privileged user or channel mode.
 	 * This is done by looking up their oper type from User::oper, then referencing
 	 * this to their oper classes, and checking the modes they can set.
-	 * @param mode The mode the check
-	 * @param type ModeType (MODETYPE_CHANNEL or MODETYPE_USER).
+	 * @param mh Mode to check
 	 * @return True if the user can set or unset this mode.
 	 */
-	bool HasModePermission(unsigned char mode, ModeType type);
+	bool HasModePermission(const ModeHandler* mh) const;
 };
 
 class RemoteUser : public User

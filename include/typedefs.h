@@ -31,6 +31,7 @@ class Extensible;
 class FakeUser;
 class InspIRCd;
 class Invitation;
+class IOHookProvider;
 class LocalUser;
 class Membership;
 class Module;
@@ -98,7 +99,7 @@ typedef std::map<std::string, XLineFactory*> XLineFactMap;
 
 /** A map of XLines indexed by string
  */
-typedef std::map<irc::string, XLine *> XLineLookup;
+typedef std::map<std::string, XLine*, irc::insensitive_swo> XLineLookup;
 
 /** A map of XLineLookup maps indexed by string
  */

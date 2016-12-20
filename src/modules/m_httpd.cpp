@@ -76,10 +76,18 @@ class HttpServerSocket : public BufferedSocket, public Timer, public insp::intru
 		, postsize(0)
 		, waitingcull(false)
 	{
-		ServerInstance->Timers.AddTimer(this);
+		if ((!via->iohookprovs.empty()) && (via->iohookprovs.back()))
+		{
+			via->iohookprovs.back()->OnAccept(this, client, server);
+			// IOHook may have errored
+			if (!getError().empty())
+			{
+				AddToCull();
+				return;
+			}
+		}
 
-		if (via->iohookprov)
-			via->iohookprov->OnAccept(this, client, server);
+		ServerInstance->Timers.AddTimer(this);
 	}
 
 	~HttpServerSocket()
@@ -413,7 +421,7 @@ class ModuleHttpServer : public Module
 		{
 			HttpServerSocket* sock = *i;
 			++i;
-			if (sock->GetIOHook() && sock->GetIOHook()->prov->creator == mod)
+			if (sock->GetModHook(mod))
 			{
 				sock->cull();
 				delete sock;

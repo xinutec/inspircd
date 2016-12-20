@@ -17,8 +17,18 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/// $LinkerFlags: -llber -lldap_r
+
+/// $PackageInfo: require_system("centos") openldap-devel
+/// $PackageInfo: require_system("ubuntu") libldap2-dev
+
 #include "inspircd.h"
 #include "modules/ldap.h"
+
+// Ignore OpenLDAP deprecation warnings on OS X Yosemite and newer.
+#if defined __APPLE__
+# pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
 
 #include <ldap.h>
 
@@ -26,8 +36,6 @@
 # pragma comment(lib, "libldap_r.lib")
 # pragma comment(lib, "liblber.lib")
 #endif
-
-/* $LinkerFlags: -lldap_r */
 
 class LDAPService;
 
@@ -170,7 +178,6 @@ class LDAPService : public LDAPProvider, public SocketThread
 	time_t last_connect;
 	int searchscope;
 	time_t timeout;
-	time_t last_timeout_check;
 
  public:
 	static LDAPMod** BuildMods(const LDAPMods& attributes)
@@ -247,7 +254,7 @@ class LDAPService : public LDAPProvider, public SocketThread
 
 	LDAPService(Module* c, ConfigTag* tag)
 		: LDAPProvider(c, "LDAP/" + tag->getString("id"))
-		, con(NULL), config(tag), last_connect(0), last_timeout_check(0)
+		, con(NULL), config(tag), last_connect(0)
 	{
 		std::string scope = config->getString("searchscope");
 		if (scope == "base")

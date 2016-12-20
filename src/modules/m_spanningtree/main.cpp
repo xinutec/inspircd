@@ -194,13 +194,12 @@ void ModuleSpanningTree::ConnectServer(Link* x, Autoconnect* y)
 {
 	bool ipvalid = true;
 
-	if (InspIRCd::Match(ServerInstance->Config->ServerName, assign(x->Name), rfc_case_insensitive_map))
+	if (InspIRCd::Match(ServerInstance->Config->ServerName, x->Name, ascii_case_insensitive_map))
 	{
 		ServerInstance->SNO->WriteToSnoMask('l', "CONNECT: Not connecting to myself.");
 		return;
 	}
 
-	DNS::QueryType start_type = DNS::QUERY_AAAA;
 	if (strchr(x->IPAddr.c_str(),':'))
 	{
 		in6_addr n;
@@ -236,6 +235,15 @@ void ModuleSpanningTree::ConnectServer(Link* x, Autoconnect* y)
 	}
 	else
 	{
+		// Guess start_type from bindip aftype
+		DNS::QueryType start_type = DNS::QUERY_AAAA;
+		irc::sockets::sockaddrs bind;
+		if ((!x->Bind.empty()) && (irc::sockets::aptosa(x->Bind, 0, bind)))
+		{
+			if (bind.sa.sa_family == AF_INET)
+				start_type = DNS::QUERY_A;
+		}
+
 		ServernameResolver* snr = new ServernameResolver(*DNS, x->IPAddr, x, start_type, y);
 		try
 		{
@@ -318,15 +326,15 @@ ModResult ModuleSpanningTree::HandleConnect(const std::vector<std::string>& para
 	for (std::vector<reference<Link> >::iterator i = Utils->LinkBlocks.begin(); i < Utils->LinkBlocks.end(); i++)
 	{
 		Link* x = *i;
-		if (InspIRCd::Match(x->Name.c_str(),parameters[0], rfc_case_insensitive_map))
+		if (InspIRCd::Match(x->Name, parameters[0], ascii_case_insensitive_map))
 		{
-			if (InspIRCd::Match(ServerInstance->Config->ServerName, assign(x->Name), rfc_case_insensitive_map))
+			if (InspIRCd::Match(ServerInstance->Config->ServerName, x->Name, ascii_case_insensitive_map))
 			{
 				user->WriteRemoteNotice(InspIRCd::Format("*** CONNECT: Server \002%s\002 is ME, not connecting.", x->Name.c_str()));
 				return MOD_RES_DENY;
 			}
 
-			TreeServer* CheckDupe = Utils->FindServer(x->Name.c_str());
+			TreeServer* CheckDupe = Utils->FindServer(x->Name);
 			if (!CheckDupe)
 			{
 				user->WriteRemoteNotice(InspIRCd::Format("*** CONNECT: Connecting to server: \002%s\002 (%s:%d)", x->Name.c_str(), (x->HiddenFromStats ? "<hidden>" : x->IPAddr.c_str()), x->Port));
@@ -355,6 +363,18 @@ void ModuleSpanningTree::OnUserInvite(User* source, User* dest, Channel* channel
 		params.push_back(ConvToStr(expiry));
 		params.Broadcast();
 	}
+}
+
+ModResult ModuleSpanningTree::OnPreTopicChange(User* user, Channel* chan, const std::string& topic)
+{
+	// XXX: Deny topic changes if the current topic set time is the current time or is in the future because
+	// other servers will drop our FTOPIC. This restriction will be removed when the protocol is updated.
+	if ((chan->topicset >= ServerInstance->Time()) && (Utils->serverlist.size() > 1))
+	{
+		user->WriteNumeric(ERR_CHANOPRIVSNEEDED, chan->name, "Retry topic change later");
+		return MOD_RES_DENY;
+	}
+	return MOD_RES_PASSTHRU;
 }
 
 void ModuleSpanningTree::OnPostTopicChange(User* user, Channel* chan, const std::string &topic)
@@ -635,7 +655,7 @@ restart:
 	for (TreeServer::ChildServers::const_iterator i = list.begin(); i != list.end(); ++i)
 	{
 		TreeSocket* sock = (*i)->GetSocket();
-		if (sock->GetIOHook() && sock->GetIOHook()->prov->creator == mod)
+		if (sock->GetModHook(mod))
 		{
 			sock->SendError("SSL module unloaded");
 			sock->Close();
@@ -647,7 +667,7 @@ restart:
 	for (SpanningTreeUtilities::TimeoutList::const_iterator i = Utils->timeoutlist.begin(); i != Utils->timeoutlist.end(); ++i)
 	{
 		TreeSocket* sock = i->first;
-		if (sock->GetIOHook() && sock->GetIOHook()->prov->creator == mod)
+		if (sock->GetModHook(mod))
 			sock->Close();
 	}
 }
@@ -754,6 +774,7 @@ Version ModuleSpanningTree::GetVersion()
 void ModuleSpanningTree::Prioritize()
 {
 	ServerInstance->Modules->SetPriority(this, PRIORITY_LAST);
+	ServerInstance->Modules.SetPriority(this, I_OnPreTopicChange, PRIORITY_FIRST);
 }
 
 MODULE_INIT(ModuleSpanningTree)

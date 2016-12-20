@@ -17,17 +17,28 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/// $CompilerFlags: find_compiler_flags("geoip" "")
+/// $LinkerFlags: find_linker_flags("geoip" "-lGeoIP")
+
+/// $PackageInfo: require_system("centos" "7.0") GeoIP-devel pkgconfig
+/// $PackageInfo: require_system("darwin") geoip pkg-config
+/// $PackageInfo: require_system("ubuntu") libgeoip-dev pkg-config
 
 #include "inspircd.h"
 #include "xline.h"
+
+// Fix warnings about the use of commas at end of enumerator lists on C++03.
+#if defined __clang__
+# pragma clang diagnostic ignored "-Wc++11-extensions"
+#elif defined __GNUC__
+# pragma GCC diagnostic ignored "-pedantic"
+#endif
 
 #include <GeoIP.h>
 
 #ifdef _WIN32
 # pragma comment(lib, "GeoIP.lib")
 #endif
-
-/* $LinkerFlags: -lGeoIP */
 
 class ModuleGeoIP : public Module
 {

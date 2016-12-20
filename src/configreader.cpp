@@ -328,6 +328,14 @@ void ServerConfig::CrossCheckConnectBlocks(ServerConfig* current)
 			me->limit = tag->getInt("limit", me->limit);
 			me->resolvehostnames = tag->getBool("resolvehostnames", me->resolvehostnames);
 
+			std::string ports = tag->getString("port");
+			if (!ports.empty())
+			{
+				irc::portparser portrange(ports, false);
+				while (int port = portrange.GetToken())
+					me->ports.insert(port);
+			}
+
 			ClassMap::iterator oldMask = oldBlocksByMask.find(typeMask);
 			if (oldMask != oldBlocksByMask.end())
 			{
@@ -362,13 +370,13 @@ struct DeprecatedConfig
 static const DeprecatedConfig ChangedConfig[] = {
 	{ "bind",        "transport",   "",                 "has been moved to <bind:ssl> as of 2.0" },
 	{ "die",         "value",       "",                 "you need to reread your config" },
-	{ "gnutls",      "starttls",    "",                 "has been replaced with m_starttls as of 2.2" },
+	{ "gnutls",      "starttls",    "",                 "has been replaced with m_starttls as of 3.0" },
 	{ "link",        "autoconnect", "",                 "2.0+ does not use this attribute - define <autoconnect> tags instead" },
 	{ "link",        "transport",   "",                 "has been moved to <link:ssl> as of 2.0" },
-	{ "module",      "name",        "m_chanprotect.so", "has been replaced with m_customprefix as of 2.2" },
-	{ "module",      "name",        "m_halfop.so",      "has been replaced with m_customprefix as of 2.2" },
-	{ "options",     "cyclehosts",  "",                 "has been replaced with m_hostcycle as of 2.2" },
-	{ "performance", "nouserdns",   "",                 "has been moved to <connect:resolvehostnames> as of 2.2" }
+	{ "module",      "name",        "m_chanprotect.so", "has been replaced with m_customprefix as of 3.0" },
+	{ "module",      "name",        "m_halfop.so",      "has been replaced with m_customprefix as of 3.0" },
+	{ "options",     "cyclehosts",  "",                 "has been replaced with m_hostcycle as of 3.0" },
+	{ "performance", "nouserdns",   "",                 "has been moved to <connect:resolvehostnames> as of 3.0" }
 };
 
 void ServerConfig::Fill()
@@ -409,6 +417,7 @@ void ServerConfig::Fill()
 	HideBans = security->getBool("hidebans");
 	HideWhoisServer = security->getString("hidewhois");
 	HideKillsServer = security->getString("hidekills");
+	HideULineKills = security->getBool("hideulinekills");
 	RestrictBannedUsers = security->getBool("restrictbannedusers", true);
 	GenericOper = security->getBool("genericoper");
 	SyntaxHints = options->getBool("syntaxhints");
@@ -432,11 +441,11 @@ void ServerConfig::Fill()
 		throw CoreException(Network + " is not a valid network name. A network name must not contain spaces.");
 
 	std::string defbind = options->getString("defaultbind");
-	if (assign(defbind) == "ipv4")
+	if (stdalgo::string::equalsci(defbind, "ipv4"))
 	{
 		WildcardIPv6 = false;
 	}
-	else if (assign(defbind) == "ipv6")
+	else if (stdalgo::string::equalsci(defbind, "ipv6"))
 	{
 		WildcardIPv6 = true;
 	}
@@ -567,7 +576,7 @@ void ServerConfig::Apply(ServerConfig* old, const std::string &useruid)
 
 	// write once here, to try it out and make sure its ok
 	if (valid)
-		ServerInstance->WritePID(this->PID);
+		ServerInstance->WritePID(this->PID, !old);
 
 	ConfigTagList binds = ConfTags("bind");
 	if (binds.first == binds.second)

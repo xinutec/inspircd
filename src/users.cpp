@@ -51,7 +51,7 @@ const char* User::FormatModes(bool showparameters)
 		if (mh && IsModeSet(mh))
 		{
 			data.push_back(n + 65);
-			if (showparameters && mh->GetNumParams(true))
+			if (showparameters && mh->NeedsParam(true))
 			{
 				std::string p = mh->GetUserParameter(this);
 				if (p.length())
@@ -64,12 +64,14 @@ const char* User::FormatModes(bool showparameters)
 }
 
 User::User(const std::string& uid, Server* srv, int type)
-	: uuid(uid), server(srv), usertype(type)
+	: age(ServerInstance->Time())
+	, signon(0)
+	, uuid(uid)
+	, server(srv)
+	, registered(REG_NONE)
+	, quitting(false)
+	, usertype(type)
 {
-	age = ServerInstance->Time();
-	signon = 0;
-	registered = 0;
-	quitting = false;
 	client_sa.sa.sa_family = AF_UNSPEC;
 
 	ServerInstance->Logs->Log("USERS", LOG_DEBUG, "New UUID for user: %s", uuid.c_str());
@@ -83,14 +85,24 @@ User::User(const std::string& uid, Server* srv, int type)
 }
 
 LocalUser::LocalUser(int myfd, irc::sockets::sockaddrs* client, irc::sockets::sockaddrs* servaddr)
-	: User(ServerInstance->UIDGen.GetUID(), ServerInstance->FakeClient->server, USERTYPE_LOCAL), eh(this),
-	bytes_in(0), bytes_out(0), cmds_in(0), cmds_out(0), nping(0), CommandFloodPenalty(0),
-	already_sent(0)
+	: User(ServerInstance->UIDGen.GetUID(), ServerInstance->FakeClient->server, USERTYPE_LOCAL)
+	, eh(this)
+	, bytes_in(0)
+	, bytes_out(0)
+	, cmds_in(0)
+	, cmds_out(0)
+	, quitting_sendq(false)
+	, lastping(true)
+	, exempt(false)
+	, nping(0)
+	, idle_lastmsg(0)
+	, CommandFloodPenalty(0)
+	, already_sent(0)
 {
-	exempt = quitting_sendq = false;
-	idle_lastmsg = 0;
+	signon = ServerInstance->Time();
+	// The user's default nick is their UUID
+	nick = uuid;
 	ident = "unknown";
-	lastping = 0;
 	eh.SetFd(myfd);
 	memcpy(&client_sa, client, sizeof(irc::sockets::sockaddrs));
 	memcpy(&server_sa, servaddr, sizeof(irc::sockets::sockaddrs));
@@ -141,19 +153,20 @@ const std::string& User::GetFullRealHost()
 	return this->cached_fullrealhost;
 }
 
-bool User::HasModePermission(unsigned char, ModeType)
+bool User::HasModePermission(const ModeHandler* mh) const
 {
 	return true;
 }
 
-bool LocalUser::HasModePermission(unsigned char mode, ModeType type)
+bool LocalUser::HasModePermission(const ModeHandler* mh) const
 {
 	if (!this->IsOper())
 		return false;
 
+	const unsigned char mode = mh->GetModeChar();
 	if (mode < 'A' || mode > ('A' + 64)) return false;
 
-	return ((type == MODETYPE_USER ? oper->AllowedUserModes : oper->AllowedChanModes))[(mode - 'A')];
+	return ((mh->GetModeType() == MODETYPE_USER ? oper->AllowedUserModes : oper->AllowedChanModes))[(mode - 'A')];
 
 }
 /*
@@ -1083,14 +1096,14 @@ void LocalUser::SetClass(const std::string &explicit_name)
 			}
 
 			/* if it requires a port ... */
-			int port = c->config->getInt("port");
-			if (port)
+			if (!c->ports.empty())
 			{
-				ServerInstance->Logs->Log("CONNECTCLASS", LOG_DEBUG, "Requires port (%d)", port);
-
 				/* and our port doesn't match, fail. */
-				if (this->GetServerPort() != port)
+				if (!c->ports.count(this->GetServerPort()))
+				{
+					ServerInstance->Logs->Log("CONNECTCLASS", LOG_DEBUG, "Requires a different port, skipping");
 					continue;
+				}
 			}
 
 			if (regdone && !c->config->getString("password").empty())
@@ -1158,7 +1171,7 @@ ConnectClass::ConnectClass(ConfigTag* tag, char t, const std::string& mask, cons
 	softsendqmax(parent.softsendqmax), hardsendqmax(parent.hardsendqmax), recvqmax(parent.recvqmax),
 	penaltythreshold(parent.penaltythreshold), commandrate(parent.commandrate),
 	maxlocal(parent.maxlocal), maxglobal(parent.maxglobal), maxconnwarn(parent.maxconnwarn), maxchans(parent.maxchans),
-	limit(parent.limit), resolvehostnames(parent.resolvehostnames)
+	limit(parent.limit), resolvehostnames(parent.resolvehostnames), ports(parent.ports)
 {
 }
 
@@ -1182,4 +1195,5 @@ void ConnectClass::Update(const ConnectClass* src)
 	maxchans = src->maxchans;
 	limit = src->limit;
 	resolvehostnames = src->resolvehostnames;
+	ports = src->ports;
 }
